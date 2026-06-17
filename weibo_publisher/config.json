@@ -1,11 +1,11 @@
 {
   "api_base": "https://api.deepseek.com",
-  "api_key": "sk-fdc8b532da46401c93ad7baa26555d21",
+  "api_key": "",
   "model": "deepseek-v4-flash",
   "default_interval": 5,
   "max_retries": 3,
   "temp_folder": "./temp",
   "weibo_url": "https://weibo.com",
   "headless": false,
-  "weibo_userid": "2997408975"
+  "weibo_userid": ""
 }
