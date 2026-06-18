@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 敏感配置
+config.json
+cookie.pkl
+memory.json
+
+# 运行时文件
+log.txt
+temp/
+*.log
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 环境
+.env
+.venv/
+venv/
+env/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store
