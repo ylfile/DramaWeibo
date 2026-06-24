@@ -179,8 +179,13 @@ class WeiboPublisher:
     # 文案拼接
     # ================================================================
 
-    def compose_text(self, drama_name: str, episode_info: str, ai_review: str) -> str:
-        """拼接完整文案：#剧名# 集数信息 AI影评 #电视剧#"""
+    def compose_text(self, drama_name: str, episode_info: str, ai_review: str, template: str = None) -> str:
+        """拼接完整文案，支持自定义模板"""
+        if template:
+            return (template
+                    .replace("{剧名}", drama_name)
+                    .replace("{集数}", episode_info)
+                    .replace("{AI影评}", ai_review))
         return f"#{drama_name}# {episode_info} {ai_review} #电视剧#"
 
     # ================================================================
@@ -524,7 +529,7 @@ class WeiboPublisher:
     # ================================================================
 
     def comment_on_post(self, comment_text: str, max_retries: int = 3) -> bool:
-        """在刚发布的微博评论区发送评论"""
+        """在刚发布的微博评论区发送评论（CDP注入，绕过ChromeDriver BMP限制）"""
         for attempt in range(1, max_retries + 1):
             try:
                 logger.info(f"第{attempt}次尝试发送评论...")
@@ -536,17 +541,38 @@ class WeiboPublisher:
                 if not comment_box:
                     raise Exception("找不到评论输入框")
 
+                # 聚焦评论框
                 comment_box.click()
-                time.sleep(1)
-                comment_box.clear()
-                comment_box.send_keys(comment_text)
+                time.sleep(0.5)
+
+                # 清空：全选+删除（避免 send_keys 的 BMP 限制）
+                self.driver.execute_script(
+                    "var b=arguments[0]; b.focus(); b.select();", comment_box
+                )
+                self.driver.execute_cdp_cmd("Input.dispatchKeyEvent", {
+                    "type": "keyDown", "key": "Backspace", "code": "Backspace",
+                    "windowsVirtualKeyCode": 8, "nativeVirtualKeyCode": 8,
+                })
+                self.driver.execute_cdp_cmd("Input.dispatchKeyEvent", {
+                    "type": "keyUp", "key": "Backspace", "code": "Backspace",
+                    "windowsVirtualKeyCode": 8, "nativeVirtualKeyCode": 8,
+                })
+                time.sleep(0.3)
+
+                # 用 CDP Input.insertText 插入文字（支持任意 Unicode）
+                self.driver.execute_cdp_cmd("Input.insertText", {"text": comment_text})
                 time.sleep(1)
 
-                send_btn = self._find_comment_submit_button()
-                if send_btn:
-                    send_btn.click()
-                else:
-                    comment_box.send_keys(Keys.RETURN)
+                # 点击提交按钮
+                self.driver.execute_script("""
+                    var btns = document.querySelectorAll('button,a,span');
+                    for (var i = btns.length - 1; i >= 0; i--) {
+                        var t = btns[i].textContent.trim();
+                        if ((t === '评论' || t === '回复' || t === '发送') && btns[i].offsetParent !== null) {
+                            btns[i].click(); break;
+                        }
+                    }
+                """)
                 time.sleep(3)
                 logger.info("✅ 评论已发送")
                 return True

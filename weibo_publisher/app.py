@@ -1,5 +1,5 @@
 """
-YLFile v4.0
+YLFile v4.2
 Selenium + Chrome + PyQt5 + Live Table
 """
 import sys, os, csv, json, time, logging, threading
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QTextEdit, QSpinBox,
+    QLabel, QLineEdit, QPushButton, QTextEdit, QSpinBox, QPlainTextEdit,
     QFileDialog, QMessageBox, QGroupBox, QFormLayout, QRadioButton, QButtonGroup,
 )
 from PyQt5.QtCore import Qt, QObject, pyqtSignal
@@ -23,7 +23,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ============================================================
 # 常量 & 配置
 # ============================================================
-BASE_DIR = Path(__file__).parent
+# PyInstaller打包后 __file__ 指向临时目录，需用 exe 所在目录
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.json"
 MEMORY_FILE = BASE_DIR / "memory.json"
 COOKIE_FILE = BASE_DIR / "cookie.pkl"
@@ -159,27 +163,29 @@ def generate_review(drama, original="", year="", api_config=None):
     if not key:
         raise Exception("请填写 API Key")
     client = OpenAI(api_key=key, base_url=base)
-    ctx = f"{drama}"
-    if original:
-        ctx += f" (original: {original})"
-    if year:
-        ctx += f" ({year})"
-    prompt = (
-        f"你是微博影视博主，给《{ctx}》写一条推荐文案。\n"
-        "严格要求：\n"
-        "1. 100字左右，口语化，带3个emoji\n"
-        "2. 不要说“刚看完”“刚追完”“刚刷完”开头\n"
-        "3. 不要提具体集数，不要说“看到第几集”\n"
-        "4. 不要说“太上头了”“不够看”“追不够”“根本停不下来”\n"
-        "5. 不要用“安利”“种草”“必看”这类营销味重的词\n"
-        "6. 不要用“谁懂啊”“家人们”“绝绝子”“救命”“姐妹们”等夸张网络用语\n"
-        "7. 可以从角色、剧情、演技、配乐、画面、氛围等角度切入\n"
-        "8. 开头要多样化，可以用提问、感叹、描述场景、聊角色等方式\n"
-        "9. 语气自然、人性化，像朋友之间聊天一样推荐，不要太正式也不要太夸张\n"
-        "10. 不加任何话题标签，只输出正文\n\n"
-        "直接输出正文，不要前缀、标题、引号。"
+    # 从 config 加载提示词，支持变量替换
+    cfg_all = load_config()
+    default_prompt = (
+        '你是微博影视博主，给《{剧名} (original: {原名}) ({年份})》写一条推荐文案。\n'
+        '严格要求：\n'
+        '1. 100字左右，口语化，带3个emoji\n'
+        '2. 不要说“刚看完”“刚追完”“刚刷完”开头\n'
+        '3. 不要提具体集数，不要说“看到第几集”\n'
+        '4. 不要说“太上头了”“不够看”“追不够”“根本停不下来”\n'
+        '5. 不要用“安利”“种草”“必看”这类营销味重的词\n'
+        '6. 不要用“谁懂啊”“家人们”“绝绝子”“救命”“姐妹们”等夸张网络用语\n'
+        '7. 可以从角色、剧情、演技、配乐、画面、氛围等角度切入\n'
+        '8. 开头要多样化，可以用提问、感叹、描述场景、聊角色等方式\n'
+        '9. 语气自然、人性化，像朋友之间聊天一样推荐，不要太正式也不要太夸张\n'
+        '10. 不加任何话题标签，只输出正文\n\n'
+        '直接输出正文，不要前缀、标题、引号。'
     )
-    logger.info(f"AI请求: drama={drama}, original={original}, year={year}, model={model}")
+    tpl = cfg_all.get('ai_prompt', default_prompt)
+    prompt = (tpl
+              .replace('{剧名}', drama)
+              .replace('{原名}', original or '')
+              .replace('{年份}', year or ''))
+    logger.info(f'AI请求: drama={drama}, original={original}, year={year}, model={model}')
     # 重试3次，逐步降低temperature
     temps = [0.9, 0.7, 0.5]
     for attempt, temp in enumerate(temps, 1):
@@ -187,12 +193,23 @@ def generate_review(drama, original="", year="", api_config=None):
             r = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
+                max_tokens=500,
                 temperature=temp,
             )
-            c = r.choices[0].message.content
-            if c and c.strip():
-                content = c.strip()
+            # 详细记录AI原始返回内容，便于排查截断问题
+            raw_content = r.choices[0].message.content
+            finish_reason = r.choices[0].finish_reason
+            usage = r.usage
+            logger.info(f"AI原始返回 (第{attempt}次):")
+            logger.info(f"  finish_reason={finish_reason}")
+            logger.info(f"  usage: prompt_tokens={usage.prompt_tokens}, completion_tokens={usage.completion_tokens}, total_tokens={usage.total_tokens}")
+            logger.info(f"  原始内容长度: {len(raw_content) if raw_content else 0} 字符")
+            logger.info(f"  原始完整内容: {raw_content}")
+
+            if raw_content and raw_content.strip():
+                content = raw_content.strip()
+                if finish_reason == "length":
+                    logger.warning(f"AI返回被截断(finish_reason=length)! max_tokens=500可能不够")
                 if len(content) < 50:
                     logger.warning(f"AI第{attempt}次返回不完整({len(content)}字): {content[:30]}...")
                     if attempt < len(temps):
@@ -243,7 +260,23 @@ def _format_episodes(season, eps):
     return f"👇👇👇全{eps}集见评👇👇👇"
 
 
-def format_text(drama, orig, year, alias, season, dtype, eps, review, tag):
+def format_text(drama, orig, year, alias, season, dtype, eps, review, tag,
+                template=None, eps_format=None, season_format=None):
+    """使用模板拼接文案，{集数}和{季数}输出原始值"""
+    if template:
+        tag_name = (tag or "电视剧").strip()
+        result = template
+        result = result.replace("{剧名}", drama)
+        result = result.replace("{季数}", season or "")
+        result = result.replace("{集数}", eps or "")
+        result = result.replace("{AI影评}", review)
+        result = result.replace("{原名}", orig or "")
+        result = result.replace("{年份}", year or "")
+        result = result.replace("{又名}", alias or "")
+        result = result.replace("{类型}", dtype or "")
+        result = result.replace("{标签}", tag_name)
+        return result
+    # 兼容无模板的旧逻辑
     lines = []
     hdr = f"#{drama}#"
     if orig:
@@ -274,20 +307,36 @@ class WeiboDriver:
         self.driver = None
 
     def start(self):
+        logger.info("[调试] WeiboDriver.start() 开始")
+        logger.info("[调试] 正在初始化Chrome驱动...")
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
-        self.driver = webdriver.Chrome(options=options)
-        self.driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"},
-        )
+        try:
+            self.driver = webdriver.Chrome(options=options)
+            logger.info(f"[调试] Chrome驱动初始化完成, session_id={self.driver.session_id}")
+        except Exception as e:
+            logger.error(f"[调试] Chrome驱动初始化失败: {e}")
+            raise
+        logger.info("[调试] 执行反检测脚本...")
+        try:
+            self.driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"},
+            )
+            logger.info("[调试] 反检测脚本执行成功")
+        except Exception as e:
+            logger.warning(f"[调试] 反检测脚本执行失败: {e}")
         if COOKIE_FILE.exists():
+            logger.info("[调试] 发现cookie文件，加载cookies...")
             self._load_cookies()
         else:
+            logger.info("[调试] 无cookie文件，需要首次登录...")
             self._first_login()
+        logger.info("[调试] 验证登录状态...")
         self._verify()
+        logger.info("[调试] WeiboDriver.start() 完成")
 
     def _has_compose(self):
         try:
@@ -306,20 +355,23 @@ class WeiboDriver:
         return False
 
     def _verify(self):
+        logger.info("[调试] _verify(): 打开微博首页验证登录...")
         self.driver.get(self.url)
+        logger.info("[调试] _verify(): 等待5秒...")
         time.sleep(5)
         if self._has_compose():
-            logger.info("登录验证成功")
+            logger.info("[调试] _verify(): 检测到编辑器，登录成功")
             self._save()
             return
         has_sub = any(c["name"] == "SUB" for c in self.driver.get_cookies())
         if has_sub:
+            logger.info("[调试] _verify(): 有SUB cookie，刷新页面...")
             self.driver.refresh()
             time.sleep(5)
             if self._has_compose():
                 self._save()
                 return
-        logger.info("未登录")
+        logger.info("[调试] _verify(): 未登录，需要手动登录")
         self._first_login()
 
     def _first_login(self):
@@ -383,10 +435,14 @@ class WeiboDriver:
     def publish(self, text, img_path, retries=3):
         for att in range(1, retries + 1):
             try:
-                logger.info(f"发布第{att}次尝试...")
+                logger.info(f"[调试] publish() 第{att}次尝试")
+                logger.info(f"[调试] 检查登录状态...")
                 self._check_relogin()
+                logger.info(f"[调试] 打开微博首页...")
                 self.driver.get(self.url)
+                logger.info(f"[调试] 等待页面加载 (6秒)...")
                 time.sleep(6)
+                logger.info(f"[调试] 注入文案到编辑器...")
                 esc = json.dumps(text)
                 self.driver.execute_script(
                     'var b=document.querySelector(\'textarea[node-type="textEl"]\')'
@@ -409,15 +465,19 @@ class WeiboDriver:
                     ap = os.path.join(tempfile.gettempdir(), f"ylf_{int(time.time() * 1000)}.jpg")
                     shutil.copy2(img_path, ap)
                     fi.send_keys(ap)
-                    logger.info("图片上传中...")
+                    logger.info(f"[调试] 图片上传中... (文件={ap})")
                     self._wait_upload(180)
                     try:
                         os.remove(ap)
                     except Exception:
                         pass
+                else:
+                    logger.warning("[调试] 未找到文件上传input，跳过图片上传")
+                logger.info("[调试] 查找发布按钮...")
                 btn = self._find_pub_btn()
                 if not btn:
                     raise Exception("找不到发布按钮")
+                logger.info(f"[调试] 点击发布按钮: {btn.tag_name} {btn.text[:20] if btn.text else ''}")
                 btn.click()
                 self._save()
                 logger.info("已点击发布")
@@ -517,8 +577,20 @@ class WeiboDriver:
                     raise Exception("找不到评论框")
                 cbox.click()
                 time.sleep(1)
-                cbox.clear()
-                cbox.send_keys(text)
+                # 用 CDP 插入文字，绕过 ChromeDriver BMP 限制
+                self.driver.execute_script(
+                    "var b=arguments[0]; b.focus(); b.select();", cbox
+                )
+                self.driver.execute_cdp_cmd("Input.dispatchKeyEvent", {
+                    "type": "keyDown", "key": "Backspace", "code": "Backspace",
+                    "windowsVirtualKeyCode": 8, "nativeVirtualKeyCode": 8,
+                })
+                self.driver.execute_cdp_cmd("Input.dispatchKeyEvent", {
+                    "type": "keyUp", "key": "Backspace", "code": "Backspace",
+                    "windowsVirtualKeyCode": 8, "nativeVirtualKeyCode": 8,
+                })
+                time.sleep(0.3)
+                self.driver.execute_cdp_cmd("Input.insertText", {"text": text})
                 time.sleep(1)
                 sent = self.driver.execute_script(
                     "var b=arguments[0];var p=b.parentElement;"
@@ -567,7 +639,8 @@ class WeiboDriver:
 # Worker: 单次发布（供手动和自动发布共用）
 # ============================================================
 def do_publish(gui, fields, cfg=None):
-    """执行单次发布流程，返回 True/False。
+    """执行单次发布流程，返回 (success, is_fatal)。
+    is_fatal=True 表示不可恢复的错误（如浏览器模块缺失），不应重试。
     使用 gui.shared_driver 复用浏览器会话。
     """
     if cfg is None:
@@ -581,14 +654,14 @@ def do_publish(gui, fields, cfg=None):
     if not drama:
         logger.error("剧名为空，跳过")
         log_sig.pub_done.emit()
-        return False
+        return False, False
     if not poster:
         logger.error(f"{drama} 海报URL为空，跳过")
         log_sig.pub_done.emit()
-        return False
+        return False, False
     if not api.get("api_key"):
         logger.error("API Key 未填写")
-        return False
+        return False, False
 
     logger.info(f"AI影评: {drama} (原名={fields.get('original','')}, 年份={fields.get('year','')})")
     try:
@@ -597,22 +670,45 @@ def do_publish(gui, fields, cfg=None):
         logger.error(f"AI影评生成失败: {drama} - {e}")
         # AI失败也通知监听器跳到下一条，避免反复重试同一条
         log_sig.pub_done.emit()
-        return False
+        return False, False
     logger.info(f"AI影评: {review}")
 
+    # 根据是否有季数选择单季/多季模板
+    season_val = fields.get("season", "").strip()
+    if season_val and hasattr(gui, 'inp_post_tpl_multi'):
+        post_tpl = gui.inp_post_tpl_multi.toPlainText().strip()
+    else:
+        post_tpl = gui.inp_post_tpl.toPlainText().strip() if hasattr(gui, 'inp_post_tpl') else None
     text = format_text(
         drama, fields.get("original", ""), fields.get("year", ""),
-        fields.get("alias", ""), fields.get("season", ""), fields.get("type", ""),
+        fields.get("alias", ""), season_val, fields.get("type", ""),
         fields.get("episodes", ""), review, fields.get("tag", ""),
+        template=post_tpl,
     )
     logger.info(f"文案:\n{text}")
 
-    img = download_poster(fields["poster"], drama)
+    logger.info(f"[调试] 准备下载海报: {fields['poster'][:80]}...")
+    try:
+        img = download_poster(fields["poster"], drama)
+        logger.info(f"[调试] 海报下载完成: {img}")
+    except Exception as e:
+        logger.error(f"[调试] 海报下载失败: {e}")
+        log_sig.pub_done.emit()
+        return False, False
 
     # 检查并创建/复用 driver
-    driver = gui.get_or_create_driver()
+    logger.info("[调试] 准备启动浏览器...")
+    try:
+        driver = gui.get_or_create_driver()
+    except Exception as e:
+        logger.error(f"[调试] 浏览器启动异常: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False, True
     if driver is None:
-        return False
+        logger.error("[调试] 浏览器启动失败，get_or_create_driver返回None")
+        return False, True
+    logger.info(f"[调试] 浏览器就绪，准备发布 (driver.alive={driver.is_alive()})")
 
     try:
         ok = driver.publish(text, img, cfg.get("max_retries", 3))
@@ -620,9 +716,11 @@ def do_publish(gui, fields, cfg=None):
             time.sleep(5)
             uid = cfg.get("weibo_userid", "")
             if fields.get("pan"):
-                driver.comment(f"夸：{fields['pan']}", uid)
+                quark_tpl = gui.inp_comment_quark_tpl.text().strip() if hasattr(gui, 'inp_comment_quark_tpl') else "K👉{链接}"
+                driver.comment(quark_tpl.replace("{链接}", fields['pan']), uid)
             if fields.get("baidu"):
-                driver.comment(f"度：{fields['baidu']}", uid)
+                baidu_tpl = gui.inp_comment_baidu_tpl.text().strip() if hasattr(gui, 'inp_comment_baidu_tpl') else "D👉{链接}"
+                driver.comment(baidu_tpl.replace("{链接}", fields['baidu']), uid)
             logger.info(f"已发布: {drama}")
             # 保存到 memory
             mem = load_memory()
@@ -638,7 +736,7 @@ def do_publish(gui, fields, cfg=None):
                 gui.set_status("浏览器已关闭，请重新发布")
             # 通知实时监听器
             log_sig.pub_done.emit()
-            return True
+            return True, False
         else:
             logger.error(f"发布失败: {drama}")
             # 检查是否浏览器被关闭导致的失败
@@ -646,7 +744,7 @@ def do_publish(gui, fields, cfg=None):
                 gui.cleanup_driver()
                 logger.warning("浏览器已关闭，请重新点击一键发布或自动发布")
                 gui.set_status("浏览器已关闭，请重新发布")
-            return False
+            return False, False
     finally:
         cleanup_temp(drama)
 
@@ -670,7 +768,7 @@ class OneClickWorker(threading.Thread):
             if not f["poster"]:
                 logger.error("无海报URL")
                 return
-            ok = do_publish(self.gui, f)
+            ok, _fatal = do_publish(self.gui, f)
             if ok:
                 self.gui.set_status(f"已发布: {f['drama']}")
             else:
@@ -694,6 +792,7 @@ class AutoPublishWorker(threading.Thread):
     def run(self):
         cfg = load_config()
         count = 0
+        MAX_AUTO_RETRIES = 3  # 发布失败后立即重试次数
         try:
             self.gui.set_status("自动发布中...")
             self.gui.btn_auto.setText("停止发布")
@@ -722,16 +821,37 @@ class AutoPublishWorker(threading.Thread):
                 logger.info(f"--- 自动发布第{count}条: {f['drama']} ---")
                 self.gui.set_status(f"自动发布 第{count}条: {f['drama']}")
 
-                ok = do_publish(self.gui, f, cfg=cfg)
-                if ok:
-                    self.gui.set_status(f"已发布: {f['drama']}")
-                else:
-                    logger.error(f"发布失败: {f['drama']}")
-                    self.gui.set_status(f"发布失败: {f['drama']}")
+                # 发布：失败后立即重试，最多MAX_AUTO_RETRIES次
+                ok = False
+                fatal = False
+                for attempt in range(1, MAX_AUTO_RETRIES + 1):
+                    ok, fatal = do_publish(self.gui, f, cfg=cfg)
+                    if ok:
+                        self.gui.set_status(f"已发布: {f['drama']}")
+                        break
+                    if fatal:
+                        logger.error(f"遇到不可恢复的错误，停止自动发布")
+                        self.gui.set_status("❌ 浏览器启动失败，请检查后重启")
+                        break
+                    logger.warning(f"发布失败 (第{attempt}/{MAX_AUTO_RETRIES}次): {f['drama']}")
+                    if attempt < MAX_AUTO_RETRIES and not self.gui.auto_stop_flag:
+                        logger.info(f"立即重试... (第{attempt + 1}次)")
+                        self.gui.set_status(f"发布失败，重试第{attempt + 1}次: {f['drama']}")
+                        time.sleep(3)  # 重试前短暂等待3秒
+
+                if fatal:
+                    break
+
+                if not ok:
+                    logger.error(f"发布{MAX_AUTO_RETRIES}次均失败，跳过: {f['drama']}")
+                    self.gui.set_status(f"{MAX_AUTO_RETRIES}次失败，跳过: {f['drama']}")
+                    # 失败跳过，不等待间隔，直接处理下一条
+                    continue
 
                 if self.gui.auto_stop_flag:
                     break
 
+                # 发布成功，等待间隔时间后处理下一条
                 mins = self.interval // 60
                 logger.info(f"等待{mins}分钟后下一条...")
                 for _ in range(self.interval):
@@ -826,7 +946,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("YLFile 微博发布工具")
-        self.setGeometry(80, 80, 1060, 750)
+        self.setGeometry(80, 80, 1060, 680)
         self.stop_flag = False
         self.auto_stop_flag = False
         self.memory = load_memory()
@@ -875,12 +995,13 @@ class MainWindow(QMainWindow):
         ml.setContentsMargins(10, 8, 10, 8)
         ml.setSpacing(6)
 
-        # ===== 上半部分：发布内容(左) + API设置&日志(右) =====
+        # ===== 上半部分：发布内容 + 模板设置 + API设置&日志 =====
         top = QHBoxLayout()
         top.setSpacing(10)
 
         # 左：发布内容
         lb = QGroupBox("发布内容")
+        lb.setFixedWidth(353)
         lf = QFormLayout()
         lf.setSpacing(5)
         lf.setLabelAlignment(Qt.AlignRight)
@@ -934,13 +1055,85 @@ class MainWindow(QMainWindow):
         lf.addRow("标签 *:", self.inp_tag)
 
         lb.setLayout(lf)
-        top.addWidget(lb, stretch=1)
+        top.addWidget(lb, stretch=2)
+
+        # ===== 模板设置（常显示） =====
+        tpl_group = QGroupBox("模板设置")
+        tpl_group.setFixedWidth(353)
+        tpl_layout = QFormLayout()
+        tpl_layout.setSpacing(3)
+
+        # 正文模板（单季）
+        default_single = (
+            "#{剧名}# {原名} {年份}\n"
+            "又名：{又名}\n"
+            "类型：{类型}\n"
+            "👇👇👇全{集数}集见评👇👇👇\n"
+            "{AI影评}#电视剧#"
+        )
+        self.inp_post_tpl = QPlainTextEdit(
+            self.config.get("post_template", default_single)
+        )
+        self.inp_post_tpl.setPlaceholderText("单季模板")
+        self.inp_post_tpl.setFixedHeight(100)
+        self.inp_post_tpl.setStyleSheet("font-size:13px;")
+        tpl_layout.addRow("正文(单季):", self.inp_post_tpl)
+
+        # 正文模板（多季）
+        default_multi = (
+            "#{剧名}# {原名}\n"
+            "又名：{又名}\n"
+            "类型：{类型}\n"
+            "👇👇👇1-{季数}季见评👇👇👇\n"
+            "{AI影评}#电视剧#"
+        )
+        self.inp_post_tpl_multi = QPlainTextEdit(
+            self.config.get("post_template_multi", default_multi)
+        )
+        self.inp_post_tpl_multi.setPlaceholderText("多季模板")
+        self.inp_post_tpl_multi.setFixedHeight(100)
+        self.inp_post_tpl_multi.setStyleSheet("font-size:13px;")
+        tpl_layout.addRow("正文(多季):", self.inp_post_tpl_multi)
+
+        # 统一变量提示
+        lbl_var = QLabel("变量: {剧名} {集数} {季数} {AI影评} {原名} {年份} {又名} {类型} {标签}")
+        lbl_var.setWordWrap(True)
+        tpl_layout.addRow("", lbl_var)
+
+        # 评论模板
+        self.inp_comment_quark_tpl = QLineEdit(
+            self.config.get("comment_quark_template", "K👉{链接}")
+        )
+        self.inp_comment_quark_tpl.setPlaceholderText("评论·夸克模板")
+        tpl_layout.addRow("夸克:", self.inp_comment_quark_tpl)
+
+        self.inp_comment_baidu_tpl = QLineEdit(
+            self.config.get("comment_baidu_template", "D👉{链接}")
+        )
+        self.inp_comment_baidu_tpl.setPlaceholderText("评论·百度模板")
+        tpl_layout.addRow("百度:", self.inp_comment_baidu_tpl)
+
+        btn_tpl_row = QHBoxLayout()
+        btn_restore_tpl = QPushButton("恢复默认")
+        btn_restore_tpl.setObjectName("tpl")
+        btn_restore_tpl.clicked.connect(self._restore_templates)
+        btn_tpl_row.addWidget(btn_restore_tpl)
+        btn_ai_prompt = QPushButton("AI提示词")
+        btn_ai_prompt.setObjectName("tpl")
+        btn_ai_prompt.clicked.connect(self._open_ai_prompt_dialog)
+        btn_tpl_row.addWidget(btn_ai_prompt)
+        btn_tpl_row.addStretch()
+        tpl_layout.addRow("", btn_tpl_row)
+
+        tpl_group.setLayout(tpl_layout)
+        top.addWidget(tpl_group, stretch=1)
 
         # 右：API设置 + 日志
         right_stack = QVBoxLayout()
         right_stack.setSpacing(6)
 
         rb = QGroupBox("API设置")
+        rb.setFixedWidth(353)
         rf = QFormLayout()
         rf.setSpacing(5)
 
@@ -957,15 +1150,11 @@ class MainWindow(QMainWindow):
         self.inp_api_model.setPlaceholderText("模型名称")
         rf.addRow("模型:", self.inp_api_model)
 
-        self.btn_save = QPushButton("保存设置")
-        self.btn_save.setObjectName("save")
-        self.btn_save.clicked.connect(self._save_cfg)
-        rf.addRow("", self.btn_save)
-
         rb.setLayout(rf)
         right_stack.addWidget(rb)
 
         lg = QGroupBox("运行日志")
+        lg.setFixedWidth(353)
         lgl = QVBoxLayout()
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
@@ -1211,15 +1400,20 @@ class MainWindow(QMainWindow):
     def get_or_create_driver(self):
         """获取或创建共享的 Selenium driver"""
         if self.shared_driver and self.shared_driver.driver and self.shared_driver.is_alive():
+            logger.info("[调试] 复用已有浏览器会话")
             return self.shared_driver
         # 创建新的 driver
+        logger.info("[调试] 创建新的 WeiboDriver 实例...")
         try:
             cfg = load_config()
             self.shared_driver = WeiboDriver(cfg.get("weibo_url", "https://weibo.com"))
             self.shared_driver.start()
+            logger.info("[调试] WeiboDriver.start() 调用成功")
             return self.shared_driver
         except Exception as e:
-            logger.error(f"启动浏览器失败: {e}")
+            logger.error(f"[调试] 浏览器启动失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             self.shared_driver = None
             return None
 
@@ -1332,6 +1526,89 @@ class MainWindow(QMainWindow):
         event.accept()
 
     # ----- 设置保存/恢复 -----
+    def _restore_templates(self):
+        """恢复模板为默认值"""
+        try:
+            self.inp_post_tpl.setPlainText(
+                "#{剧名}# {原名} {年份}\n又名：{又名}\n类型：{类型}\n"
+                "👇👇👇全{集数}集见评👇👇👇\n{AI影评}#电视剧#"
+            )
+            self.inp_post_tpl_multi.setPlainText(
+                "#{剧名}# {原名}\n又名：{又名}\n类型：{类型}\n"
+                "👇👇👇1-{季数}季见评👇👇👇\n{AI影评}#电视剧#"
+            )
+            self.inp_comment_quark_tpl.setText("K👉{链接}")
+            self.inp_comment_baidu_tpl.setText("D👉{链接}")
+            logger.info('模板已恢复默认，请点击[保存所有设置]生效')
+        except Exception as e:
+            logger.error(f"恢复模板失败: {e}")
+
+    # ----- AI提示词弹窗 -----
+    DEFAULT_AI_PROMPT = (
+        '你是微博影视博主，给《{剧名} (original: {原名}) ({年份})》写一条推荐文案。\n'
+        '严格要求：\n'
+        '1. 100字左右，口语化，带3个emoji\n'
+        '2. 不要说"刚看完""刚追完""刚刷完"开头\n'
+        '3. 不要提具体集数，不要说"看到第几集"\n'
+        '4. 不要说"太上头了""不够看""追不够""根本停不下来"\n'
+        '5. 不要用"安利""种草""必看"这类营销味重的词\n'
+        '6. 不要用"谁懂啊""家人们""绝绝子""救命""姐妹们"等夸张网络用语\n'
+        '7. 可以从角色、剧情、演技、配乐、画面、氛围等角度切入\n'
+        '8. 开头要多样化，可以用提问、感叹、描述场景、聊角色等方式\n'
+        '9. 语气自然、人性化，像朋友之间聊天一样推荐，不要太正式也不要太夸张\n'
+        '10. 不加任何话题标签，只输出正文\n\n'
+        '直接输出正文，不要前缀、标题、引号。'
+    )
+
+    def _open_ai_prompt_dialog(self):
+        """打开AI提示词编辑弹窗"""
+        dlg = QMainWindow(self)
+        dlg.setWindowTitle("AI影评提示词设置")
+        dlg.setFixedSize(600, 500)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+
+        central = QWidget()
+        dlg.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        layout.addWidget(QLabel("提示词模板（变量: {剧名} {原名} {年份}）："))
+
+        txt = QPlainTextEdit()
+        txt.setPlainText(self.config.get("ai_prompt", self.DEFAULT_AI_PROMPT))
+        txt.setStyleSheet("font-size:12px;")
+        layout.addWidget(txt)
+
+        btn_row = QHBoxLayout()
+
+        def on_restore():
+            txt.setPlainText(self.DEFAULT_AI_PROMPT)
+
+        def on_confirm():
+            self.config["ai_prompt"] = txt.toPlainText().strip()
+            try:
+                with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                    json.dump(self.config, f, ensure_ascii=False, indent=2)
+                logger.info("AI提示词已保存")
+            except Exception as e:
+                logger.error(f"保存AI提示词失败: {e}")
+            dlg.close()
+
+        btn_default = QPushButton("恢复默认")
+        btn_default.setObjectName("tpl")
+        btn_default.clicked.connect(on_restore)
+        btn_row.addWidget(btn_default)
+
+        btn_row.addStretch()
+
+        btn_ok = QPushButton("确定")
+        btn_ok.setObjectName("save")
+        btn_ok.clicked.connect(on_confirm)
+        btn_row.addWidget(btn_ok)
+
+        layout.addLayout(btn_row)
+        dlg.show()
+
     def _save_cfg(self):
         self.config["api_base"] = self.inp_api_base.text().strip()
         self.config["api_key"] = self.inp_api_key.text().strip()
@@ -1350,6 +1627,10 @@ class MainWindow(QMainWindow):
         self.config["feishu_appid"] = self.inp_feishu_appid.text().strip()
         self.config["feishu_secret"] = self.inp_feishu_secret.text().strip()
         self.config["start_row"] = self.get_start_row()
+        self.config["post_template"] = self.inp_post_tpl.toPlainText().strip()
+        self.config["post_template_multi"] = self.inp_post_tpl_multi.toPlainText().strip()
+        self.config["comment_quark_template"] = self.inp_comment_quark_tpl.text().strip()
+        self.config["comment_baidu_template"] = self.inp_comment_baidu_tpl.text().strip()
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
         logger.info("设置已保存")
@@ -1373,6 +1654,10 @@ class MainWindow(QMainWindow):
         self.config["feishu_secret"] = self.inp_feishu_secret.text()
         self.config["default_interval"] = self.spn_int.value()
         self.config["start_row"] = self.get_start_row()
+        self.config["post_template"] = self.inp_post_tpl.toPlainText().strip()
+        self.config["post_template_multi"] = self.inp_post_tpl_multi.toPlainText().strip()
+        self.config["comment_quark_template"] = self.inp_comment_quark_tpl.text().strip()
+        self.config["comment_baidu_template"] = self.inp_comment_baidu_tpl.text().strip()
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
         logger.info("所有设置已保存")
@@ -1611,7 +1896,7 @@ class MainWindow(QMainWindow):
 # ============================================================
 def main():
     setup_logging()
-    logger.info("YLFile v4.0 启动")
+    logger.info("YLFile v4.2 启动")
     app = QApplication(sys.argv)
     w = MainWindow()
     w.show()

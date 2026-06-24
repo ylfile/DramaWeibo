@@ -65,6 +65,9 @@ class WeiboPublisherGUI:
                 "temp_folder": "./temp",
                 "weibo_url": "https://weibo.com",
                 "headless": False,
+                "post_template": "#{剧名}# {集数} {AI影评} #电视剧#",
+                "comment_quark_template": "K👉{链接}",
+                "comment_baidu_template": "D👉{链接}",
             }
 
     def _load_memory(self) -> dict:
@@ -107,6 +110,26 @@ class WeiboPublisherGUI:
     def _check_duplicate(self, drama_name: str) -> bool:
         """检查是否已发布过该剧，返回True表示是重复"""
         return drama_name in self.memory.get("posted_dramas", [])
+
+    def _save_template_config(self):
+        """将模板设置保存到 config.json"""
+        config_path = Path(__file__).parent / "config.json"
+        try:
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            else:
+                cfg = {}
+        except Exception:
+            cfg = {}
+        cfg["post_template"] = self.post_tpl_var.get()
+        cfg["comment_quark_template"] = self.comment_quark_tpl_var.get()
+        cfg["comment_baidu_template"] = self.comment_baidu_tpl_var.get()
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存模板配置失败: {e}")
 
     # ================================================================
     # 构建界面
@@ -172,6 +195,70 @@ class WeiboPublisherGUI:
         ).grid(row=5, column=1, sticky=tk.W, padx=(5, 0), pady=3)
 
         form_frame.columnconfigure(1, weight=1)
+
+        # ============================================================
+        # 模板设置（常显示）
+        # ============================================================
+        DEFAULT_POST_TEMPLATE = "#{剧名}# {集数} {AI影评} #电视剧#"
+        DEFAULT_COMMENT_QUARK = "K👉{链接}"
+        DEFAULT_COMMENT_BAIDU = "D👉{链接}"
+
+        tpl_frame = ttk.LabelFrame(main_frame, text="📝 模板设置", padding=10)
+        tpl_frame.pack(fill=tk.X, pady=(0, 5))
+
+        # 正文模板
+        ttk.Label(tpl_frame, text="正文模板：").grid(row=0, column=0, sticky=tk.W, pady=3)
+        self.post_tpl_var = tk.StringVar(value=self.config.get("post_template", DEFAULT_POST_TEMPLATE))
+        ttk.Entry(tpl_frame, textvariable=self.post_tpl_var, width=50).grid(
+            row=0, column=1, sticky=tk.EW, padx=(5, 5), pady=3
+        )
+        ttk.Label(
+            tpl_frame, text="变量: {剧名} {集数} {AI影评}",
+            foreground="gray", font=("微软雅黑", 8),
+        ).grid(row=0, column=2, sticky=tk.W, pady=3)
+
+        # 评论·夸克模板
+        ttk.Label(tpl_frame, text="评论·夸克：").grid(row=1, column=0, sticky=tk.W, pady=3)
+        self.comment_quark_tpl_var = tk.StringVar(value=self.config.get("comment_quark_template", DEFAULT_COMMENT_QUARK))
+        ttk.Entry(tpl_frame, textvariable=self.comment_quark_tpl_var, width=50).grid(
+            row=1, column=1, sticky=tk.EW, padx=(5, 5), pady=3
+        )
+        ttk.Label(
+            tpl_frame, text="变量: {链接}",
+            foreground="gray", font=("微软雅黑", 8),
+        ).grid(row=1, column=2, sticky=tk.W, pady=3)
+
+        # 评论·百度模板
+        ttk.Label(tpl_frame, text="评论·百度：").grid(row=2, column=0, sticky=tk.W, pady=3)
+        self.comment_baidu_tpl_var = tk.StringVar(value=self.config.get("comment_baidu_template", DEFAULT_COMMENT_BAIDU))
+        ttk.Entry(tpl_frame, textvariable=self.comment_baidu_tpl_var, width=50).grid(
+            row=2, column=1, sticky=tk.EW, padx=(5, 5), pady=3
+        )
+        ttk.Label(
+            tpl_frame, text="变量: {链接}",
+            foreground="gray", font=("微软雅黑", 8),
+        ).grid(row=2, column=2, sticky=tk.W, pady=3)
+
+        # 恢复默认按钮
+        def _restore_templates():
+            self.post_tpl_var.set(DEFAULT_POST_TEMPLATE)
+            self.comment_quark_tpl_var.set(DEFAULT_COMMENT_QUARK)
+            self.comment_baidu_tpl_var.set(DEFAULT_COMMENT_BAIDU)
+            self._save_template_config()
+            self.log("模板已恢复默认", "INFO")
+
+        def _on_tpl_change(*args):
+            self._save_template_config()
+
+        self.post_tpl_var.trace_add("write", _on_tpl_change)
+        self.comment_quark_tpl_var.trace_add("write", _on_tpl_change)
+        self.comment_baidu_tpl_var.trace_add("write", _on_tpl_change)
+
+        ttk.Button(
+            tpl_frame, text="↺ 恢复默认", command=_restore_templates,
+        ).grid(row=3, column=1, sticky=tk.W, padx=(5, 0), pady=(5, 0))
+
+        tpl_frame.columnconfigure(1, weight=1)
 
         # ============================================================
         # 操作按钮
@@ -426,21 +513,23 @@ class WeiboPublisherGUI:
             self.is_running = False
 
     # ================================================================
-    # ★ 构建评论文案（支持 夸： 和 度： 两种网盘链接）
+    # ★ 构建评论文案（使用自定义模板）
     # ================================================================
 
     def _build_comment_lines(self, pan: str, baidu: str = "") -> list:
         """
-        构建评论区内容列表
+        根据模板构建评论区内容列表
 
         Returns:
-            评论文本列表，如 ["夸：https://...", "度：https://..."]
+            评论文本列表
         """
         lines = []
+        quark_tpl = self.comment_quark_tpl_var.get() or "K👉{链接}"
+        baidu_tpl = self.comment_baidu_tpl_var.get() or "D👉{链接}"
         if pan and pan.strip():
-            lines.append(f"夸：{pan.strip()}")
+            lines.append(quark_tpl.replace("{链接}", pan.strip()))
         if baidu and baidu.strip():
-            lines.append(f"度：{baidu.strip()}")
+            lines.append(baidu_tpl.replace("{链接}", baidu.strip()))
         return lines
 
     # ================================================================
@@ -475,7 +564,7 @@ class WeiboPublisherGUI:
                 self.log(f"AI影评（{len(ai_review)}字）：{ai_review}", "SUCCESS")
 
                 # 拼接文案
-                full_text = publisher.compose_text(drama, episode, ai_review)
+                full_text = publisher.compose_text(drama, episode, ai_review, template=self.post_tpl_var.get())
                 self.log(f"完整文案：{full_text}", "INFO")
 
                 # 下载海报
@@ -575,7 +664,7 @@ class WeiboPublisherGUI:
                     ai_review = generate_review(drama)
                     self.log(f"AI影评（{len(ai_review)}字）：{ai_review}", "SUCCESS")
 
-                    full_text = publisher.compose_text(drama, episode, ai_review)
+                    full_text = publisher.compose_text(drama, episode, ai_review, template=self.post_tpl_var.get())
                     self.log(f"完整文案：{full_text}", "INFO")
 
                     self.log("正在下载海报...", "INFO")
