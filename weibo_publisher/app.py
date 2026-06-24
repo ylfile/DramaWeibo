@@ -193,7 +193,7 @@ def generate_review(drama, original="", year="", api_config=None):
             r = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
+                max_tokens=1000,
                 temperature=temp,
             )
             # 详细记录AI原始返回内容，便于排查截断问题
