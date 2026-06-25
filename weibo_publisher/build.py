@@ -1,5 +1,5 @@
 """
-YLFile 构建脚本
+YLFile自动发布 构建脚本
 自动递增版本号 + PyInstaller 打包 + Inno Setup 安装包
 
 用法：python build.py
@@ -43,7 +43,7 @@ def update_version(old: str, new: str):
     """更新 app.py 和 README.md 中的版本号"""
     text = APP_PY.read_text(encoding="utf-8")
     text = text.replace(f'__version__ = "{old}"', f'__version__ = "{new}"')
-    text = text.replace(f"YLFile v{old}", f"YLFile v{new}")
+    text = text.replace(f"YLFile自动发布 v{old}", f"YLFile自动发布 v{new}")
     APP_PY.write_text(text, encoding="utf-8")
     print(f"[OK] app.py: v{old} -> v{new}")
 

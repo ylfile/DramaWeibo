@@ -1,6 +1,6 @@
 """
 GUI界面模块
-使用Tkinter构建YLFile微博发布工具的图形界面
+使用Tkinter构建YLFile自动发布工具的图形界面
 包含：输入表单、一键发布、暂停/继续、CSV导入、日志显示、记忆功能
 """
 
@@ -15,14 +15,14 @@ from pathlib import Path
 
 
 class WeiboPublisherGUI:
-    """YLFile微博发布工具的主界面"""
+    """YLFile自动发布工具的主界面"""
 
     # 记忆文件路径
     MEMORY_FILE = Path(__file__).parent / "memory.json"
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("YLFile微博发布工具")
+        self.root.title("YLFile自动发布")
         self.root.geometry("720x900")
         self.root.resizable(True, True)
 
@@ -141,7 +141,7 @@ class WeiboPublisherGUI:
 
         # 标题
         title_label = ttk.Label(
-            main_frame, text="🎬 YLFile微博发布工具",
+            main_frame, text="🎬 YLFile自动发布",
             font=("微软雅黑", 16, "bold")
         )
         title_label.pack(pady=(0, 10))

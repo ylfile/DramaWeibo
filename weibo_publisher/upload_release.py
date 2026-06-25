@@ -1,5 +1,5 @@
 """
-上传 YLFile 到 GitHub Release
+上传 YLFile自动发布 到 GitHub Release
 用法: python upload_release.py <github_token>
 """
 import sys
@@ -84,11 +84,13 @@ def main():
     else:
         r = requests.post(f"{api}/releases", headers=headers, json={
             "tag_name": TAG,
-            "name": f"YLFile {TAG}",
-            "body": "## YLFile v4.7\n\n"
-                    "- 新增 Inno Setup 安装包，内置 VC++ 运行时，解决其他电脑 dll 缺失\n"
+            "name": f"YLFile自动发布 {TAG}",
+            "body": "## YLFile自动发布 v4.7\n\n"
+                    "- 新图标、中文安装包界面\n"
+                    "- 更新时显示下载进度条\n"
+                    "- Inno Setup 安装包，内置 VC++ 运行时，解决其他电脑 dll 缺失\n"
                     "- 自动更新改用安装包静默安装，不弹终端窗口\n"
-                    "- 浏览器关闭只显示一条提示\n"
+                    "- 浏览器关闭只显示一条友好提示\n"
                     "- 评论模板支持所有变量",
             "draft": False,
             "prerelease": False,

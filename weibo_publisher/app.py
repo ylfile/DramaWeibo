@@ -1,5 +1,5 @@
 """
-YLFile v4.5
+YLFile自动发布 v4.7
 Selenium + Chrome + PyQt5 + Live Table
 """
 __version__ = "4.7"
@@ -959,7 +959,7 @@ class LiveTableWorker(threading.Thread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YLFile 微博发布工具")
+        self.setWindowTitle("YLFile自动发布")
         self.setGeometry(80, 80, 1060, 680)
         self.stop_flag = False
         self.auto_stop_flag = False
@@ -1911,7 +1911,7 @@ class MainWindow(QMainWindow):
 # ============================================================
 def main():
     setup_logging()
-    logger.info(f"YLFile v{__version__} 启动")
+    logger.info(f"YLFile自动发布 v{__version__} 启动")
     app = QApplication(sys.argv)
     w = MainWindow()
 

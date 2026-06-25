@@ -1,5 +1,5 @@
 """
-YLFile 自动更新模块
+YLFile自动发布 自动更新模块
 通过 GitHub Releases 检查新版本，下载安装包并静默安装。
 """
 import os

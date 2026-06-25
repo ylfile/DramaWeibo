@@ -1,9 +1,9 @@
 ; YLFile 安装脚本 (Inno Setup 6)
 ; 编译: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
-#define MyAppName "YLFile"
+#define MyAppName "YLFile自动发布"
 #define MyAppVersion "4.7"
-#define MyAppPublisher "YLFile"
+#define MyAppPublisher "YLFile自动发布"
 #define MyAppExeName "YLFile.exe"
 
 [Setup]
