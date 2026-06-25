@@ -1,5 +1,5 @@
 """
-上传 YLFile.exe 到 GitHub Release
+上传 YLFile 到 GitHub Release
 用法: python upload_release.py <github_token>
 """
 import sys
@@ -8,8 +8,33 @@ import requests
 from pathlib import Path
 
 REPO = "ylfile/DramaWeibo"
-TAG = "v4.3"
-EXE = Path(__file__).parent / "dist" / "YLFile.exe"
+TAG = "v4.6"
+DIST_DIR = Path(__file__).parent / "dist"
+ASSETS = [
+    ("YLFile.exe", DIST_DIR / "YLFile.exe"),
+    ("YLFile-Setup.exe", DIST_DIR / "YLFile-Setup.exe"),
+]
+
+
+def upload_asset(api, headers, release_id, asset_name, asset_path):
+    """上传一个文件到 release"""
+    if not asset_path.exists():
+        print(f"  [跳过] {asset_name} 不存在")
+        return True
+    size = asset_path.stat().st_size
+    print(f"  上传 {asset_name} ({size // 1024 // 1024}MB)...")
+    url = f"{api}/releases/{release_id}/assets?name={asset_name}"
+    with open(asset_path, "rb") as f:
+        r = requests.post(
+            url,
+            headers={**headers, "Content-Type": "application/octet-stream"},
+            data=f,
+        )
+    if r.status_code not in (200, 201):
+        print(f"  上传失败: {r.text}")
+        return False
+    print(f"  上传成功!")
+    return True
 
 
 def main():
@@ -26,40 +51,36 @@ def main():
     }
     api = f"https://api.github.com/repos/{REPO}"
 
-    # 1. 检查 tag 是否存在
+    # 1. 检查 tag
     print(f"[1/4] 检查 tag {TAG}...")
     r = requests.get(f"{api}/git/ref/tags/{TAG}", headers=headers, allow_redirects=True)
     if r.status_code != 200:
         print(f"  Tag {TAG} 不存在，先创建...")
-        # 用 SHA 原始方式创建 annotated tag
         r2 = requests.get(f"{api}/commits/master", headers=headers)
         sha = r2.json()["sha"]
         r3 = requests.post(f"{api}/git/refs", headers=headers, json={
-            "ref": f"refs/tags/{TAG}",
-            "sha": sha,
+            "ref": f"refs/tags/{TAG}", "sha": sha,
         })
         if r3.status_code not in (200, 201):
             print(f"  创建 tag 失败: {r3.status_code} {r3.text}")
             sys.exit(1)
     print(f"  Tag {TAG} 就绪")
 
-    # 2. 检查是否已有 release
+    # 2. 检查 Release
     print(f"[2/4] 检查 Release...")
     r = requests.get(f"{api}/releases/tags/{TAG}", headers=headers)
     if r.status_code == 200:
         release_id = r.json()["id"]
         print(f"  Release 已存在 (id={release_id})")
     else:
-        # 创建 release
         r = requests.post(f"{api}/releases", headers=headers, json={
             "tag_name": TAG,
             "name": f"YLFile {TAG}",
-            "body": "## YLFile v4.3 更新内容\n\n"
-                    "### 新功能\n"
-                    "- **自动更新**：启动时自动检查 GitHub 新版本，有新版弹窗提示，一键下载替换重启\n"
-                    "- **评论模板变量**：评论区现在支持所有变量\n\n"
-                    "### 从旧版本升级\n"
-                    "直接下载 YLFile.exe 替换即可，config.json 和 memory.json 不受影响。",
+            "body": "## YLFile v4.6\n\n"
+                    "- 新增安装包（含 VC++ 运行时），解决其他电脑 dll 缺失\n"
+                    "- 自动更新改用安装包静默安装，不再弹终端窗口\n"
+                    "- 浏览器被关闭时只显示一条友好提示\n"
+                    "- 评论模板支持所有变量",
             "draft": False,
             "prerelease": False,
         })
@@ -69,21 +90,10 @@ def main():
         release_id = r.json()["id"]
         print(f"  Release 创建成功 (id={release_id})")
 
-    # 3. 上传 exe
-    print(f"[3/4] 上传 {EXE.name} ({EXE.stat().st_size // 1024 // 1024}MB)...")
-    upload_url = f"https://uploads.github.com/repos/{REPO}/releases/{release_id}/assets?name=YLFile.exe"
-
-    with open(EXE, "rb") as f:
-        r = requests.post(
-            upload_url,
-            headers={**headers, "Content-Type": "application/octet-stream"},
-            data=f,
-        )
-
-    if r.status_code not in (200, 201):
-        print(f"  上传失败: {r.text}")
-        sys.exit(1)
-    print(f"  上传成功!")
+    # 3. 上传文件
+    print(f"[3/4] 上传文件...")
+    for name, path in ASSETS:
+        upload_asset(api, headers, release_id, name, path)
 
     # 4. 验证
     print(f"[4/4] 验证...")
@@ -91,7 +101,7 @@ def main():
     assets = r.json().get("assets", [])
     for a in assets:
         print(f"  [OK] {a['name']} ({a['size'] // 1024 // 1024}MB)")
-    print(f"\n🎉 完成! Release 地址: https://github.com/{REPO}/releases/tag/{TAG}")
+    print(f"\n[DONE] https://github.com/{REPO}/releases/tag/{TAG}")
 
 
 if __name__ == "__main__":

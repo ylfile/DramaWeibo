@@ -2,7 +2,7 @@
 YLFile v4.5
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.6"
+__version__ = "4.7"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -1933,22 +1933,37 @@ def main():
     def _on_result(result):
         if result is None:
             return
-        _, new_ver, download_url = result
+        _, new_ver, download_url, is_installer = result
         ret = QMessageBox.question(
             w, "发现新版本",
             f"发现新版本 v{new_ver}，是否更新？",
             QMessageBox.Yes | QMessageBox.No,
         )
-        if ret == QMessageBox.Yes:
-            from updater import download_update, restart_app
-            dest = Path(os.environ.get("TEMP", ".")) / "YLFile"
-            dest.mkdir(exist_ok=True)
-            new_exe = download_update(download_url, dest)
-            if new_exe:
-                QMessageBox.information(w, "更新完成", "新版本下载完成，点击确定将重启应用。")
-                restart_app(new_exe)
+        if ret != QMessageBox.Yes:
+            return
+        # 后台下载，避免 UI 假死
+        from updater import download_update, install_update
+        dest = Path(os.environ.get("TEMP", ".")) / "YLFile"
+        dest.mkdir(exist_ok=True)
+        filename = "YLFile-Setup.exe" if is_installer else "YLFile_update.exe"
+
+        class _DlSignal(QObject):
+            done = pyqtSignal(object)
+
+        dl_sig = _DlSignal()
+
+        def _dl():
+            dl_sig.done.emit(download_update(download_url, dest, filename))
+
+        def _on_dl(path):
+            if path:
+                install_update(path, is_installer)
             else:
                 QMessageBox.warning(w, "更新失败", "下载失败，请稍后重试或手动下载。")
+
+        dl_sig.done.connect(_on_dl)
+        QMessageBox.information(w, "正在更新", "后台下载中，请稍候...")
+        threading.Thread(target=_dl, daemon=True).start()
 
     _sig.result_ready.connect(_on_result)
     threading.Thread(target=_check, daemon=True).start()

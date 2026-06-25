@@ -1,6 +1,6 @@
 """
 YLFile 自动更新模块
-通过 GitHub Releases 检查新版本，下载并重启替换。
+通过 GitHub Releases 检查新版本，下载安装包并静默安装。
 """
 import os
 import sys
@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 GITHUB_REPO = "ylfile/DramaWeibo"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-ASSET_NAME = "YLFile.exe"  # Release 中上传的 exe 文件名
+SETUP_ASSET = "YLFile-Setup.exe"  # 安装包文件名
+EXE_ASSET = "YLFile.exe"  # 兜底：如果没有安装包就下载 exe
 
 
 def _parse_version(ver_str: str):
@@ -29,29 +30,37 @@ def _parse_version(ver_str: str):
         return (0, 0)
 
 
+def _get_token():
+    """从 config.json 读取 GitHub token"""
+    try:
+        cfg_path = Path(__file__).parent / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text("utf-8"))
+            return cfg.get("github_token", "")
+    except Exception:
+        pass
+    return ""
+
+
 def check_update(current_version: str):
     """
     检查 GitHub 最新 Release 是否有新版本。
 
     Returns:
-        (has_update, new_version, download_url) 有更新时返回
+        (has_update, new_version, download_url, is_installer) 有更新时返回
         None  网络异常或无更新
     """
     try:
         headers = {"Accept": "application/vnd.github+json"}
-        # 如果 config 中有 GitHub token 则使用，提高 API 限额（5000次/小时）
-        try:
-            cfg = json.loads(Path(__file__).parent.joinpath("config.json").read_text("utf-8"))
-            token = cfg.get("github_token", "")
-            if token:
-                headers["Authorization"] = f"token {token}"
-        except Exception:
-            pass
+        token = _get_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+
         resp = requests.get(GITHUB_API, headers=headers, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
-        tag = data.get("tag_name", "")  # e.g. "v4.3"
+        tag = data.get("tag_name", "")
         if not tag:
             return None
 
@@ -62,36 +71,41 @@ def check_update(current_version: str):
             logger.info(f"当前已是最新版本: {cur_ver}")
             return None
 
-        # 从 assets 中找 exe 下载链接
+        # 优先找安装包，兜底找 exe
         download_url = None
+        is_installer = False
         for asset in data.get("assets", []):
-            if asset.get("name", "") == ASSET_NAME:
+            name = asset.get("name", "")
+            if name == SETUP_ASSET:
                 download_url = asset.get("browser_download_url")
+                is_installer = True
                 break
+            elif name == EXE_ASSET and not download_url:
+                download_url = asset.get("browser_download_url")
 
         if not download_url:
-            logger.warning(f"新版本 {new_ver} 未找到 {ASSET_NAME} 下载链接")
+            logger.warning(f"新版本 {new_ver} 未找到下载链接")
             return None
 
         logger.info(f"发现新版本: {new_ver}（当前 {cur_ver}）")
-        return (True, new_ver, download_url)
+        return (True, new_ver, download_url, is_installer)
 
     except Exception as e:
         logger.info(f"检查更新跳过: {e}")
         return None
 
 
-def download_update(url: str, dest_dir: Path) -> Path | None:
+def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe") -> Path | None:
     """
-    下载新版本 exe 到 dest_dir/YLFile_new.exe。
+    下载更新文件到 dest_dir/filename。
 
     Returns:
         下载完成的文件路径，失败返回 None
     """
-    dest = dest_dir / "YLFile_new.exe"
+    dest = dest_dir / filename
     try:
         logger.info(f"开始下载更新: {url}")
-        resp = requests.get(url, stream=True, timeout=300)
+        resp = requests.get(url, stream=True, timeout=600)
         resp.raise_for_status()
 
         total = int(resp.headers.get("content-length", 0))
@@ -103,9 +117,9 @@ def download_update(url: str, dest_dir: Path) -> Path | None:
                 downloaded += len(chunk)
                 if total > 0:
                     pct = downloaded * 100 // total
-                    logger.info(f"下载进度: {pct}% ({downloaded // 1024}KB / {total // 1024}KB)")
+                    logger.info(f"下载进度: {pct}% ({downloaded // 1024 // 1024}MB / {total // 1024 // 1024}MB)")
 
-        logger.info(f"下载完成: {dest} ({downloaded // 1024}KB)")
+        logger.info(f"下载完成: {dest} ({downloaded // 1024 // 1024}MB)")
         return dest
 
     except Exception as e:
@@ -115,28 +129,41 @@ def download_update(url: str, dest_dir: Path) -> Path | None:
         return None
 
 
-def restart_app(new_exe_path: Path):
+def install_update(installer_path: Path, is_installer: bool = True):
     """
-    生成 restart.bat 脚本，等待当前进程退出后替换 exe 并重启。
+    运行安装包或替换 exe，然后退出当前进程。
+
+    is_installer=True: 运行 Inno Setup 安装包（静默模式）
+    is_installer=False: 直接替换 exe（兼容旧版）
     """
     exe_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-    bat_path = exe_dir / "temp" / "restart.bat"
 
-    # 确保 temp 目录存在
-    bat_path.parent.mkdir(exist_ok=True)
-
-    bat_content = f"""@echo off
+    if is_installer:
+        # 运行安装包：/SILENT 静默安装，/DIR 指定目录，/RESTARTAPPLICATIONS 安装后重启
+        cmd = [
+            str(installer_path),
+            "/SILENT",
+            f"/DIR={exe_dir}",
+            "/RESTARTAPPLICATIONS",
+        ]
+        logger.info(f"启动安装包: {' '.join(cmd)}")
+    else:
+        # 兜底：用 bat 脚本替换 exe
+        bat_path = exe_dir / "temp" / "restart.bat"
+        bat_path.parent.mkdir(exist_ok=True)
+        bat_content = f"""@echo off
 timeout /t 2 /nobreak >nul
-move /y "{new_exe_path}" "{exe_dir}\\YLFile.exe"
+move /y "{installer_path}" "{exe_dir}\\YLFile.exe"
 start "" "{exe_dir}\\YLFile.exe"
 del "%~f0"
 """
-    bat_path.write_text(bat_content, encoding="gbk")
-    logger.info(f"重启脚本已生成: {bat_path}")
+        bat_path.write_text(bat_content, encoding="gbk")
+        cmd = ["cmd", "/c", str(bat_path)]
+        logger.info(f"启动替换脚本: {bat_path}")
 
-    # 启动 bat 脚本，然后退出当前进程
+    # 启动安装/替换进程
     subprocess.Popen(
-        ["cmd", "/c", str(bat_path)],
+        cmd,
         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
     )
     time.sleep(0.5)
