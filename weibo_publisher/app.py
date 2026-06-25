@@ -490,7 +490,8 @@ class WeiboDriver:
                     return True
                 raise Exception("发布检测未通过")
             except Exception as e:
-                logger.warning(f"第{att}次: {e}")
+                err_msg = getattr(e, 'msg', None) or str(e).split('\n')[0]
+                logger.warning(f"第{att}次: {err_msg}")
                 if att < retries:
                     time.sleep(3)
         return False
