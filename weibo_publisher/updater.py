@@ -95,12 +95,10 @@ def check_update(current_version: str):
         return None
 
 
-def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe") -> Path | None:
+def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe", progress_cb=None) -> Path | None:
     """
     下载更新文件到 dest_dir/filename。
-
-    Returns:
-        下载完成的文件路径，失败返回 None
+    progress_cb(percent) 会被回调，percent 为 0-100。
     """
     dest = dest_dir / filename
     try:
@@ -115,9 +113,9 @@ def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe
             for chunk in resp.iter_content(chunk_size=1024 * 1024):
                 f.write(chunk)
                 downloaded += len(chunk)
-                if total > 0:
+                if total > 0 and progress_cb:
                     pct = downloaded * 100 // total
-                    logger.info(f"下载进度: {pct}% ({downloaded // 1024 // 1024}MB / {total // 1024 // 1024}MB)")
+                    progress_cb(pct)
 
         logger.info(f"下载完成: {dest} ({downloaded // 1024 // 1024}MB)")
         return dest

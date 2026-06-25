@@ -1941,28 +1941,46 @@ def main():
         )
         if ret != QMessageBox.Yes:
             return
-        # 后台下载，避免 UI 假死
         from updater import download_update, install_update
+        from PyQt5.QtWidgets import QProgressDialog
         dest = Path(os.environ.get("TEMP", ".")) / "YLFile"
         dest.mkdir(exist_ok=True)
         filename = "YLFile-Setup.exe" if is_installer else "YLFile_update.exe"
 
+        # 进度条对话框
+        progress = QProgressDialog("正在下载更新...", "取消", 0, 100, w)
+        progress.setWindowTitle("更新中")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+
         class _DlSignal(QObject):
+            pct = pyqtSignal(int)
             done = pyqtSignal(object)
 
         dl_sig = _DlSignal()
 
+        def _on_pct(p):
+            if progress.wasCanceled():
+                return
+            progress.setValue(p)
+
+        dl_sig.pct.connect(_on_pct)
+
         def _dl():
-            dl_sig.done.emit(download_update(download_url, dest, filename))
+            result = download_update(download_url, dest, filename, progress_cb=lambda p: dl_sig.pct.emit(p))
+            dl_sig.done.emit(result)
 
         def _on_dl(path):
+            progress.close()
             if path:
                 install_update(path, is_installer)
             else:
                 QMessageBox.warning(w, "更新失败", "下载失败，请稍后重试或手动下载。")
 
         dl_sig.done.connect(_on_dl)
-        QMessageBox.information(w, "正在更新", "后台下载中，请稍候...")
         threading.Thread(target=_dl, daemon=True).start()
 
     _sig.result_ready.connect(_on_result)
