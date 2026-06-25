@@ -8,10 +8,9 @@ import requests
 from pathlib import Path
 
 REPO = "ylfile/DramaWeibo"
-TAG = "v4.7"
+TAG = "v4.8"
 DIST_DIR = Path(__file__).parent / "dist"
 ASSETS = [
-    ("YLFile.exe", DIST_DIR / "YLFile.exe"),
     ("YLFile-Setup.exe", DIST_DIR / "YLFile-Setup.exe"),
 ]
 
@@ -85,10 +84,11 @@ def main():
         r = requests.post(f"{api}/releases", headers=headers, json={
             "tag_name": TAG,
             "name": f"YLFile自动发布 {TAG}",
-            "body": "## YLFile自动发布 v4.7\n\n"
+            "body": "## YLFile自动发布 v4.8\n\n"
+                    "- 软件更名为「YLFile自动发布」\n"
                     "- 新图标、中文安装包界面\n"
                     "- 更新时显示下载进度条\n"
-                    "- Inno Setup 安装包，内置 VC++ 运行时，解决其他电脑 dll 缺失\n"
+                    "- Inno Setup 安装包，内置 VC++ 运行时\n"
                     "- 自动更新改用安装包静默安装，不弹终端窗口\n"
                     "- 浏览器关闭只显示一条友好提示\n"
                     "- 评论模板支持所有变量",
