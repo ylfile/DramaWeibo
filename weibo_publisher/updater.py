@@ -4,6 +4,7 @@ YLFile 自动更新模块
 """
 import os
 import sys
+import json
 import subprocess
 import time
 import logging
@@ -38,6 +39,14 @@ def check_update(current_version: str):
     """
     try:
         headers = {"Accept": "application/vnd.github+json"}
+        # 如果 config 中有 GitHub token 则使用，提高 API 限额（5000次/小时）
+        try:
+            cfg = json.loads(Path(__file__).parent.joinpath("config.json").read_text("utf-8"))
+            token = cfg.get("github_token", "")
+            if token:
+                headers["Authorization"] = f"token {token}"
+        except Exception:
+            pass
         resp = requests.get(GITHUB_API, headers=headers, timeout=15)
         resp.raise_for_status()
         data = resp.json()
@@ -68,7 +77,7 @@ def check_update(current_version: str):
         return (True, new_ver, download_url)
 
     except Exception as e:
-        logger.warning(f"检查更新失败，跳过: {e}")
+        logger.info(f"检查更新跳过: {e}")
         return None
 
 
