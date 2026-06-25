@@ -48,13 +48,38 @@ def update_version(old: str, new: str):
 
 def build():
     """调用 PyInstaller 打包"""
+    hidden = [
+        "selenium",
+        "selenium.webdriver",
+        "selenium.webdriver.common",
+        "selenium.webdriver.common.by",
+        "selenium.webdriver.common.keys",
+        "selenium.webdriver.common.action_chains",
+        "selenium.webdriver.common.service",
+        "selenium.webdriver.chrome",
+        "selenium.webdriver.chrome.webdriver",
+        "selenium.webdriver.chrome.options",
+        "selenium.webdriver.chrome.service",
+        "selenium.webdriver.remote",
+        "selenium.webdriver.remote.webdriver",
+        "selenium.webdriver.remote.webelement",
+        "selenium.webdriver.remote.command",
+        "selenium.webdriver.support",
+        "selenium.webdriver.support.ui",
+        "selenium.webdriver.support.expected_conditions",
+        "openai",
+        "requests",
+        "urllib3",
+    ]
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
         "--noconsole",
         "--name=YLFile",
-        "main.py",
     ]
+    for h in hidden:
+        cmd.extend(["--hidden-import", h])
+    cmd.append("main.py")
     print(f"\n[构建] {' '.join(cmd)}\n")
     ret = subprocess.run(cmd, cwd=str(Path(__file__).parent))
     if ret.returncode == 0:

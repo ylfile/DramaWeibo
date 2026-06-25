@@ -1,8 +1,8 @@
 """
-YLFile v4.3
+YLFile v4.4
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.3"
+__version__ = "4.4"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
