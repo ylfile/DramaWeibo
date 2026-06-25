@@ -2,7 +2,7 @@
 YLFile v4.5
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.5"
+__version__ = "4.6"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -319,8 +319,7 @@ class WeiboDriver:
             self.driver = webdriver.Chrome(options=options)
             logger.info(f"[调试] Chrome驱动初始化完成, session_id={self.driver.session_id}")
         except Exception as e:
-            logger.error(f"[调试] Chrome驱动初始化失败: {e}")
-            raise
+            raise RuntimeError("Chrome浏览器启动失败，请关闭所有Chrome窗口后重试") from None
         logger.info("[调试] 执行反检测脚本...")
         try:
             self.driver.execute_cdp_cmd(
@@ -358,7 +357,10 @@ class WeiboDriver:
 
     def _verify(self):
         logger.info("[调试] _verify(): 打开微博首页验证登录...")
-        self.driver.get(self.url)
+        try:
+            self.driver.get(self.url)
+        except Exception as e:
+            raise RuntimeError("浏览器已被关闭") from None
         logger.info("[调试] _verify(): 等待5秒...")
         time.sleep(5)
         if self._has_compose():
