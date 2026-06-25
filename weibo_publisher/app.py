@@ -1,8 +1,8 @@
 """
-YLFile v4.4
+YLFile v4.5
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.4"
+__version__ = "4.5"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -703,12 +703,16 @@ def do_publish(gui, fields, cfg=None):
     try:
         driver = gui.get_or_create_driver()
     except Exception as e:
-        logger.error(f"[调试] 浏览器启动异常: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        err_msg = str(e)
+        if "invalid session" in err_msg or "disconnected" in err_msg or "not connected" in err_msg:
+            logger.warning("浏览器已被关闭，发布已取消")
+        else:
+            logger.error(f"[调试] 浏览器启动异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         return False, True
     if driver is None:
-        logger.error("[调试] 浏览器启动失败，get_or_create_driver返回None")
+        logger.warning("浏览器启动失败或已被关闭，发布已取消")
         return False, True
     logger.info(f"[调试] 浏览器就绪，准备发布 (driver.alive={driver.is_alive()})")
 
@@ -845,8 +849,8 @@ class AutoPublishWorker(threading.Thread):
                         self.gui.set_status(f"已发布: {f['drama']}")
                         break
                     if fatal:
-                        logger.error(f"遇到不可恢复的错误，停止自动发布")
-                        self.gui.set_status("❌ 浏览器启动失败，请检查后重启")
+                        logger.warning("浏览器已关闭或启动失败，停止自动发布")
+                        self.gui.set_status("浏览器已关闭，发布已停止")
                         break
                     logger.warning(f"发布失败 (第{attempt}/{MAX_AUTO_RETRIES}次): {f['drama']}")
                     if attempt < MAX_AUTO_RETRIES and not self.gui.auto_stop_flag:
@@ -1430,9 +1434,13 @@ class MainWindow(QMainWindow):
             logger.info("[调试] WeiboDriver.start() 调用成功")
             return self.shared_driver
         except Exception as e:
-            logger.error(f"[调试] 浏览器启动失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            err_msg = str(e)
+            if "invalid session" in err_msg or "disconnected" in err_msg or "not connected" in err_msg:
+                logger.warning(f"浏览器已被关闭: {e}")
+            else:
+                logger.error(f"[调试] 浏览器启动失败: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
             self.shared_driver = None
             return None
 
