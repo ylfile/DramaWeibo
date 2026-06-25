@@ -1436,13 +1436,11 @@ class MainWindow(QMainWindow):
             logger.info("[调试] WeiboDriver.start() 调用成功")
             return self.shared_driver
         except Exception as e:
-            err_msg = str(e)
+            err_msg = getattr(e, 'msg', None) or str(e).split('\n')[0]
             if "invalid session" in err_msg or "disconnected" in err_msg or "not connected" in err_msg:
-                logger.warning(f"浏览器已被关闭: {e}")
+                logger.warning("浏览器已被关闭，发布已取消")
             else:
-                logger.error(f"[调试] 浏览器启动失败: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                logger.error(f"浏览器启动失败: {err_msg}")
             self.shared_driver = None
             return None
 
