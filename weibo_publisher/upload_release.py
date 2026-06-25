@@ -8,7 +8,7 @@ import requests
 from pathlib import Path
 
 REPO = "ylfile/DramaWeibo"
-TAG = "v4.6"
+TAG = "v4.7"
 DIST_DIR = Path(__file__).parent / "dist"
 ASSETS = [
     ("YLFile.exe", DIST_DIR / "YLFile.exe"),
@@ -17,13 +17,22 @@ ASSETS = [
 
 
 def upload_asset(api, headers, release_id, asset_name, asset_path):
-    """上传一个文件到 release"""
+    """上传一个文件到 release，如果已存在则先删除"""
     if not asset_path.exists():
         print(f"  [跳过] {asset_name} 不存在")
         return True
+
+    # 先删除已存在的同名文件
+    r = requests.get(f"{api}/releases/{release_id}/assets", headers=headers)
+    if r.status_code == 200:
+        for a in r.json():
+            if a.get("name") == asset_name:
+                print(f"  删除旧版 {asset_name}...")
+                requests.delete(a["url"], headers=headers)
+
     size = asset_path.stat().st_size
     print(f"  上传 {asset_name} ({size // 1024 // 1024}MB)...")
-    url = f"{api}/releases/{release_id}/assets?name={asset_name}"
+    url = f"https://uploads.github.com/repos/{REPO}/releases/{release_id}/assets?name={asset_name}"
     with open(asset_path, "rb") as f:
         r = requests.post(
             url,
@@ -76,10 +85,10 @@ def main():
         r = requests.post(f"{api}/releases", headers=headers, json={
             "tag_name": TAG,
             "name": f"YLFile {TAG}",
-            "body": "## YLFile v4.6\n\n"
-                    "- 新增安装包（含 VC++ 运行时），解决其他电脑 dll 缺失\n"
-                    "- 自动更新改用安装包静默安装，不再弹终端窗口\n"
-                    "- 浏览器被关闭时只显示一条友好提示\n"
+            "body": "## YLFile v4.7\n\n"
+                    "- 新增 Inno Setup 安装包，内置 VC++ 运行时，解决其他电脑 dll 缺失\n"
+                    "- 自动更新改用安装包静默安装，不弹终端窗口\n"
+                    "- 浏览器关闭只显示一条提示\n"
                     "- 评论模板支持所有变量",
             "draft": False,
             "prerelease": False,

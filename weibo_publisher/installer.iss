@@ -26,6 +26,8 @@ RestartApplications=no
 UninstallDisplayName={#MyAppName}
 DisableDirPage=no
 AllowNoIcons=yes
+SetupIconFile=YLFile.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
