@@ -1,7 +1,9 @@
 """
-YLFile v4.2
+YLFile v4.3
 Selenium + Chrome + PyQt5 + Live Table
 """
+__version__ = "4.3"
+
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
 
@@ -715,12 +717,25 @@ def do_publish(gui, fields, cfg=None):
         if ok:
             time.sleep(5)
             uid = cfg.get("weibo_userid", "")
+            # 评论模板：支持所有变量 + {链接}
+            def _fmt_comment(tpl, link):
+                r = tpl.replace("{链接}", link or "")
+                r = r.replace("{剧名}", fields.get("drama", ""))
+                r = r.replace("{原名}", fields.get("original", ""))
+                r = r.replace("{年份}", fields.get("year", ""))
+                r = r.replace("{又名}", fields.get("alias", ""))
+                r = r.replace("{类型}", fields.get("type", ""))
+                r = r.replace("{季数}", fields.get("season", ""))
+                r = r.replace("{集数}", fields.get("episodes", ""))
+                r = r.replace("{AI影评}", fields.get("review", ""))
+                r = r.replace("{标签}", fields.get("tag", ""))
+                return r
             if fields.get("pan"):
                 quark_tpl = gui.inp_comment_quark_tpl.text().strip() if hasattr(gui, 'inp_comment_quark_tpl') else "K👉{链接}"
-                driver.comment(quark_tpl.replace("{链接}", fields['pan']), uid)
+                driver.comment(_fmt_comment(quark_tpl, fields['pan']), uid)
             if fields.get("baidu"):
                 baidu_tpl = gui.inp_comment_baidu_tpl.text().strip() if hasattr(gui, 'inp_comment_baidu_tpl') else "D👉{链接}"
-                driver.comment(baidu_tpl.replace("{链接}", fields['baidu']), uid)
+                driver.comment(_fmt_comment(baidu_tpl, fields['baidu']), uid)
             logger.info(f"已发布: {drama}")
             # 保存到 memory
             mem = load_memory()
@@ -1112,6 +1127,10 @@ class MainWindow(QMainWindow):
         )
         self.inp_comment_baidu_tpl.setPlaceholderText("评论·百度模板")
         tpl_layout.addRow("百度:", self.inp_comment_baidu_tpl)
+
+        lbl_comment_var = QLabel("变量: {链接} {剧名} {原名} {年份} {又名} {类型} {季数} {集数} {AI影评} {标签}")
+        lbl_comment_var.setWordWrap(True)
+        tpl_layout.addRow("", lbl_comment_var)
 
         btn_tpl_row = QHBoxLayout()
         btn_restore_tpl = QPushButton("恢复默认")
@@ -1896,9 +1915,49 @@ class MainWindow(QMainWindow):
 # ============================================================
 def main():
     setup_logging()
-    logger.info("YLFile v4.2 启动")
+    logger.info(f"YLFile v{__version__} 启动")
     app = QApplication(sys.argv)
     w = MainWindow()
+
+    # --- 自动更新检查（后台线程 + 信号回调到主线程） ---
+    class _UpdateSignal(QObject):
+        result_ready = pyqtSignal(object)
+
+    _sig = _UpdateSignal()
+
+    def _check():
+        try:
+            from updater import check_update
+            result = check_update(__version__)
+        except Exception as e:
+            logger.warning(f"自动更新检查异常: {e}")
+            result = None
+        _sig.result_ready.emit(result)
+
+    def _on_result(result):
+        if result is None:
+            return
+        _, new_ver, download_url = result
+        ret = QMessageBox.question(
+            w, "发现新版本",
+            f"发现新版本 v{new_ver}，是否更新？",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if ret == QMessageBox.Yes:
+            from updater import download_update, restart_app
+            dest = Path(os.environ.get("TEMP", ".")) / "YLFile"
+            dest.mkdir(exist_ok=True)
+            new_exe = download_update(download_url, dest)
+            if new_exe:
+                QMessageBox.information(w, "更新完成", "新版本下载完成，点击确定将重启应用。")
+                restart_app(new_exe)
+            else:
+                QMessageBox.warning(w, "更新失败", "下载失败，请稍后重试或手动下载。")
+
+    _sig.result_ready.connect(_on_result)
+    threading.Thread(target=_check, daemon=True).start()
+    # --- 更新检查结束 ---
+
     w.show()
     sys.exit(app.exec_())
 
