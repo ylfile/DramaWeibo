@@ -2,7 +2,7 @@
 YLFile自动发布 v4.8
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.8"
+__version__ = "4.9"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -644,8 +644,9 @@ class WeiboDriver:
 # Worker: 单次发布（供手动和自动发布共用）
 # ============================================================
 def do_publish(gui, fields, cfg=None):
-    """执行单次发布流程，返回 (success, is_fatal)。
+    """执行单次发布流程，返回 (success, is_fatal, is_dup)。
     is_fatal=True 表示不可恢复的错误（如浏览器模块缺失），不应重试。
+    is_dup=True 表示该内容已发布过，无需重复发送。
     使用 gui.shared_driver 复用浏览器会话。
     """
     if cfg is None:
@@ -659,14 +660,21 @@ def do_publish(gui, fields, cfg=None):
     if not drama:
         logger.error("剧名为空，跳过")
         log_sig.pub_done.emit()
-        return False, False
+        return False, False, False
     if not poster:
         logger.error(f"{drama} 海报URL为空，跳过")
         log_sig.pub_done.emit()
-        return False, False
+        return False, False, False
     if not api.get("api_key"):
         logger.error("API Key 未填写")
-        return False, False
+        return False, False, False
+
+    # 重复检测：检查该内容是否已发布过
+    mem = load_memory()
+    key = f"{drama}|{fields.get('original', '')}"
+    if key in mem.get("posted_dramas", []):
+        logger.warning(f"重复发布检测: {drama} 已发布过，跳过")
+        return False, False, True
 
     logger.info(f"AI影评: {drama} (原名={fields.get('original','')}, 年份={fields.get('year','')})")
     try:
@@ -675,7 +683,7 @@ def do_publish(gui, fields, cfg=None):
         logger.error(f"AI影评生成失败: {drama} - {e}")
         # AI失败也通知监听器跳到下一条，避免反复重试同一条
         log_sig.pub_done.emit()
-        return False, False
+        return False, False, False
     logger.info(f"AI影评: {review}")
 
     # 根据是否有季数选择单季/多季模板
@@ -699,16 +707,16 @@ def do_publish(gui, fields, cfg=None):
     except Exception as e:
         logger.error(f"[调试] 海报下载失败: {e}")
         log_sig.pub_done.emit()
-        return False, False
+        return False, False, False
 
     # 检查并创建/复用 driver
     logger.info("[调试] 准备启动浏览器...")
     try:
         driver = gui.get_or_create_driver()
     except Exception as e:
-        return False, True
+        return False, True, False
     if driver is None:
-        return False, True
+        return False, True, False
     logger.info(f"[调试] 浏览器就绪，准备发布 (driver.alive={driver.is_alive()})")
 
     try:
@@ -750,7 +758,7 @@ def do_publish(gui, fields, cfg=None):
                 gui.set_status("浏览器已关闭，请重新发布")
             # 通知实时监听器
             log_sig.pub_done.emit()
-            return True, False
+            return True, False, False
         else:
             logger.error(f"发布失败: {drama}")
             # 检查是否浏览器被关闭导致的失败
@@ -758,7 +766,7 @@ def do_publish(gui, fields, cfg=None):
                 gui.cleanup_driver()
                 logger.warning("浏览器已关闭，请重新点击一键发布或自动发布")
                 gui.set_status("浏览器已关闭，请重新发布")
-            return False, False
+            return False, False, False
     finally:
         cleanup_temp(drama)
 
@@ -782,8 +790,11 @@ class OneClickWorker(threading.Thread):
             if not f["poster"]:
                 logger.error("无海报URL")
                 return
-            ok, _fatal = do_publish(self.gui, f)
-            if ok:
+            ok, _fatal, is_dup = do_publish(self.gui, f)
+            if is_dup:
+                self.gui.set_status(f"已发布过: {f['drama']}，无需重复发送")
+                logger.info(f"重复发布检测: {f['drama']} 已发布过，跳过")
+            elif ok:
                 self.gui.set_status(f"已发布: {f['drama']}")
             else:
                 self.gui.set_status(f"发布失败: {f['drama']}")
@@ -838,8 +849,13 @@ class AutoPublishWorker(threading.Thread):
                 # 发布：失败后立即重试，最多MAX_AUTO_RETRIES次
                 ok = False
                 fatal = False
+                is_dup = False
                 for attempt in range(1, MAX_AUTO_RETRIES + 1):
-                    ok, fatal = do_publish(self.gui, f, cfg=cfg)
+                    ok, fatal, is_dup = do_publish(self.gui, f, cfg=cfg)
+                    if is_dup:
+                        logger.info(f"自动发布重复检测: {f['drama']} 已发布过，跳过")
+                        self.gui.set_status(f"已发布过: {f['drama']}，跳过")
+                        break
                     if ok:
                         self.gui.set_status(f"已发布: {f['drama']}")
                         break
@@ -855,6 +871,10 @@ class AutoPublishWorker(threading.Thread):
 
                 if fatal:
                     break
+
+                # 重复发布：直接跳过，不等待间隔
+                if is_dup:
+                    continue
 
                 if not ok:
                     logger.error(f"发布{MAX_AUTO_RETRIES}次均失败，跳过: {f['drama']}")
@@ -1477,9 +1497,6 @@ class MainWindow(QMainWindow):
             "model": self.inp_api_model.text().strip(),
         }
 
-    def _is_dup(self, d, o):
-        return f"{d}|{o}" in self.memory.get("posted_dramas", [])
-
     # ----- 按钮动作 -----
     def on_pub(self):
         """一键发布"""
@@ -1490,15 +1507,6 @@ class MainWindow(QMainWindow):
         if not f["poster"]:
             QMessageBox.warning(self, "提示", "请填写海报URL")
             return
-        if self._is_dup(f["drama"], f["original"]):
-            if (
-                QMessageBox.question(
-                    self, "重复", f"{f['drama']}已发布。再次发布？",
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                != QMessageBox.Yes
-            ):
-                return
         self.stop_flag = False
         self.set_buttons_enabled(False)
         OneClickWorker(self).start()
