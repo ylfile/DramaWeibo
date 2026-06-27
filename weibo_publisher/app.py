@@ -75,6 +75,7 @@ class LogSig(QObject):
     msg = pyqtSignal(str)
     fill = pyqtSignal(dict)
     pub_done = pyqtSignal()
+    dup_alert = pyqtSignal(str)
 
 
 log_sig = LogSig()
@@ -874,14 +875,21 @@ class AutoPublishWorker(threading.Thread):
                 if fatal:
                     break
 
-                # 重复发布：直接跳过，不等待间隔
+                # 重复发布：停止自动发布并提醒用户
                 if is_dup:
-                    continue
+                    self.gui.auto_stop_flag = True
+                    log_sig.dup_alert.emit(f['drama'])
+                    return
 
                 if not ok:
                     logger.error(f"发布{MAX_AUTO_RETRIES}次均失败，跳过: {f['drama']}")
                     self.gui.set_status(f"{MAX_AUTO_RETRIES}次失败，跳过: {f['drama']}")
-                    # 失败跳过，不等待间隔，直接处理下一条
+                    # 等待间隔后重试
+                    mins = self.interval // 60
+                    for _ in range(self.interval):
+                        if self.gui.auto_stop_flag:
+                            return
+                        time.sleep(1)
                     continue
 
                 if self.gui.auto_stop_flag:
@@ -1367,6 +1375,7 @@ class MainWindow(QMainWindow):
         log_sig.fill.connect(self._do_fill_gui)
         log_sig.pub_done.connect(self._on_pub_done)
         log_sig.msg.connect(self._add_log)
+        log_sig.dup_alert.connect(self._on_dup_alert)
 
         # 恢复上次设置
         self._restore()
@@ -1376,6 +1385,13 @@ class MainWindow(QMainWindow):
         self.log_area.append(m)
         sb = self.log_area.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _on_dup_alert(self, drama):
+        """重复发布提醒：停止自动发布并弹窗"""
+        self.auto_stop_flag = True
+        self.btn_auto.setText("自动发布")
+        self.set_status(f"已停止: {drama} 已发布过")
+        QMessageBox.warning(self, "重复发布", f"「{drama}」已发布过，自动发布已停止。\n请更换内容后重新启动。")
 
     def _on_pub_done(self):
         """发布成功信号 → 更新起始行 + 自动保存 + 通知监听器"""
