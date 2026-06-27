@@ -714,8 +714,10 @@ def do_publish(gui, fields, cfg=None):
     try:
         driver = gui.get_or_create_driver()
     except Exception as e:
+        logger.error(f"浏览器启动异常: {e}")
         return False, True, False
     if driver is None:
+        logger.error("浏览器启动失败: get_or_create_driver 返回 None")
         return False, True, False
     logger.info(f"[调试] 浏览器就绪，准备发布 (driver.alive={driver.is_alive()})")
 
@@ -1449,6 +1451,7 @@ class MainWindow(QMainWindow):
             logger.info("[调试] WeiboDriver.start() 调用成功")
             return self.shared_driver
         except Exception as e:
+            logger.error(f"WeiboDriver启动失败: {e}")
             self.shared_driver = None
             return None
 
