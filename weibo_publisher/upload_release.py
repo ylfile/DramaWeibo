@@ -8,7 +8,7 @@ import requests
 from pathlib import Path
 
 REPO = "ylfile/DramaWeibo"
-TAG = "v4.8"
+TAG = "v4.9"
 DIST_DIR = Path(__file__).parent / "dist"
 ASSETS = [
     ("YLFile-Setup.exe", DIST_DIR / "YLFile-Setup.exe"),
@@ -84,14 +84,17 @@ def main():
         r = requests.post(f"{api}/releases", headers=headers, json={
             "tag_name": TAG,
             "name": f"YLFile自动发布 {TAG}",
-            "body": "## YLFile自动发布 v4.8\n\n"
-                    "- 软件更名为「YLFile自动发布」\n"
-                    "- 新图标、中文安装包界面\n"
-                    "- 更新时显示下载进度条\n"
-                    "- Inno Setup 安装包，内置 VC++ 运行时\n"
-                    "- 自动更新改用安装包静默安装，不弹终端窗口\n"
-                    "- 浏览器关闭只显示一条友好提示\n"
-                    "- 评论模板支持所有变量",
+            "body": "## YLFile自动发布 v4.9\n\n"
+                    "### 新功能\n"
+                    "- 发布重复检测：防止重复发布同一内容到微博\n"
+                    "- 手动发布检测到重复时状态栏提醒\n"
+                    "- 自动发布检测到重复时跳过并日志记录\n\n"
+                    "### 改进\n"
+                    "- 移除旧的弹窗确认逻辑，改为自动阻止\n"
+                    "- 新增 11 个单元测试覆盖重复检测逻辑\n\n"
+                    "### 安装包\n"
+                    "- 下载 `YLFile-Setup.exe` 安装（推荐）\n"
+                    "- 或下载 `YLFile.exe` 直接运行（免安装）",
             "draft": False,
             "prerelease": False,
         })
