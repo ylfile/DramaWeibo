@@ -1,8 +1,8 @@
 """
-YLFile自动发布 v4.8
+YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.9"
+__version__ = "4.11"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QSpinBox, QPlainTextEdit,
     QFileDialog, QMessageBox, QGroupBox, QFormLayout, QRadioButton, QButtonGroup,
+    QCheckBox,
 )
 from PyQt5.QtCore import Qt, QObject, pyqtSignal
 
@@ -644,10 +645,11 @@ class WeiboDriver:
 # ============================================================
 # Worker: 单次发布（供手动和自动发布共用）
 # ============================================================
-def do_publish(gui, fields, cfg=None):
+def do_publish(gui, fields, cfg=None, skip_dup=True):
     """执行单次发布流程，返回 (success, is_fatal, is_dup)。
     is_fatal=True 表示不可恢复的错误（如浏览器模块缺失），不应重试。
     is_dup=True 表示该内容已发布过，无需重复发送。
+    skip_dup=True 时执行重复检测，False 时跳过检测允许重发。
     使用 gui.shared_driver 复用浏览器会话。
     """
     if cfg is None:
@@ -666,33 +668,40 @@ def do_publish(gui, fields, cfg=None):
         logger.error(f"{drama} 海报URL为空，跳过")
         log_sig.pub_done.emit()
         return False, False, False
-    if not api.get("api_key"):
-        logger.error("API Key 未填写")
-        return False, False, False
 
     # 重复检测：检查该内容是否已发布过
-    mem = load_memory()
-    key = f"{drama}|{fields.get('original', '')}"
-    if key in mem.get("posted_dramas", []):
-        logger.warning(f"重复发布检测: {drama} 已发布过，跳过")
-        return False, False, True
+    if skip_dup:
+        mem = load_memory()
+        key = f"{drama}|{fields.get('original', '')}"
+        if key in mem.get("posted_dramas", []):
+            logger.warning(f"重复发布检测: {drama} 已发布过，跳过")
+            return False, False, True
 
-    logger.info(f"AI影评: {drama} (原名={fields.get('original','')}, 年份={fields.get('year','')})")
-    try:
-        review = generate_review(drama, fields.get("original", ""), fields.get("year", ""), api)
-    except Exception as e:
-        logger.error(f"AI影评生成失败: {drama} - {e}")
-        # AI失败也通知监听器跳到下一条，避免反复重试同一条
-        log_sig.pub_done.emit()
-        return False, False, False
-    logger.info(f"AI影评: {review}")
-
-    # 根据是否有季数选择单季/多季模板
+    # 根据是否有季数选择单季/多季模板（提前到AI影评之前，用于判断是否需要AI影评）
     season_val = fields.get("season", "").strip()
     if season_val and hasattr(gui, 'inp_post_tpl_multi'):
         post_tpl = gui.inp_post_tpl_multi.toPlainText().strip()
     else:
         post_tpl = gui.inp_post_tpl.toPlainText().strip() if hasattr(gui, 'inp_post_tpl') else None
+
+    # 按需生成AI影评：模板中含 {AI影评} 才调用API
+    review = ""
+    if post_tpl and "{AI影评}" in post_tpl:
+        if not api.get("api_key"):
+            logger.error("API Key 未填写，无法生成AI影评")
+            log_sig.pub_done.emit()
+            return False, False, False
+        logger.info(f"AI影评: {drama} (原名={fields.get('original','')}, 年份={fields.get('year','')})")
+        try:
+            review = generate_review(drama, fields.get("original", ""), fields.get("year", ""), api)
+        except Exception as e:
+            logger.error(f"AI影评生成失败: {drama} - {e}")
+            log_sig.pub_done.emit()
+            return False, False, False
+        logger.info(f"AI影评: {review}")
+    else:
+        logger.info(f"模板不含AI影评变量，跳过API调用")
+
     text = format_text(
         drama, fields.get("original", ""), fields.get("year", ""),
         fields.get("alias", ""), season_val, fields.get("type", ""),
@@ -727,10 +736,11 @@ def do_publish(gui, fields, cfg=None):
         if ok:
             time.sleep(5)
             uid = cfg.get("weibo_userid", "")
-            # 评论模板：支持所有变量 + {链接}
-            def _fmt_comment(tpl, link):
-                r = tpl.replace("{链接}", link or "")
-                r = r.replace("{剧名}", fields.get("drama", ""))
+            # 评论模板：统一网盘链接模板
+            def _fmt_comment(tpl):
+                r = tpl.replace("{剧名}", fields.get("drama", ""))
+                r = r.replace("{夸克链接}", fields.get("pan", ""))
+                r = r.replace("{百度链接}", fields.get("baidu", ""))
                 r = r.replace("{原名}", fields.get("original", ""))
                 r = r.replace("{年份}", fields.get("year", ""))
                 r = r.replace("{又名}", fields.get("alias", ""))
@@ -740,12 +750,17 @@ def do_publish(gui, fields, cfg=None):
                 r = r.replace("{AI影评}", fields.get("review", ""))
                 r = r.replace("{标签}", fields.get("tag", ""))
                 return r
-            if fields.get("pan"):
-                quark_tpl = gui.inp_comment_quark_tpl.text().strip() if hasattr(gui, 'inp_comment_quark_tpl') else "K👉{链接}"
-                driver.comment(_fmt_comment(quark_tpl, fields['pan']), uid)
-            if fields.get("baidu"):
-                baidu_tpl = gui.inp_comment_baidu_tpl.text().strip() if hasattr(gui, 'inp_comment_baidu_tpl') else "D👉{链接}"
-                driver.comment(_fmt_comment(baidu_tpl, fields['baidu']), uid)
+            quark = fields.get("pan", "")
+            baidu = fields.get("baidu", "")
+            if quark or baidu:
+                comment_tpl = gui.inp_comment_tpl.text().strip() if hasattr(gui, 'inp_comment_tpl') else "【{剧名}】K👉{夸克链接}D👉{百度链接}"
+                comment_text = _fmt_comment(comment_tpl)
+                if not baidu:
+                    # 百度链接为空时，去掉 D👉 及后面的内容
+                    idx = comment_text.find("D👉")
+                    if idx > 0:
+                        comment_text = comment_text[:idx].rstrip()
+                driver.comment(comment_text, uid)
             logger.info(f"已发布: {drama}")
             # 保存到 memory
             mem = load_memory()
@@ -793,7 +808,7 @@ class OneClickWorker(threading.Thread):
             if not f["poster"]:
                 logger.error("无海报URL")
                 return
-            ok, _fatal, is_dup = do_publish(self.gui, f)
+            ok, _fatal, is_dup = do_publish(self.gui, f, skip_dup=self.gui.chk_skip_dup.isChecked())
             if is_dup:
                 self.gui.set_status(f"已发布过: {f['drama']}，无需重复发送")
                 logger.info(f"重复发布检测: {f['drama']} 已发布过，跳过")
@@ -854,7 +869,7 @@ class AutoPublishWorker(threading.Thread):
                 fatal = False
                 is_dup = False
                 for attempt in range(1, MAX_AUTO_RETRIES + 1):
-                    ok, fatal, is_dup = do_publish(self.gui, f, cfg=cfg)
+                    ok, fatal, is_dup = do_publish(self.gui, f, cfg=cfg, skip_dup=self.gui.chk_skip_dup.isChecked())
                     if is_dup:
                         logger.info(f"自动发布重复检测: {f['drama']} 已发布过，跳过")
                         self.gui.set_status(f"已发布过: {f['drama']}，跳过")
@@ -1085,13 +1100,10 @@ class MainWindow(QMainWindow):
         self.inp_poster.setPlaceholderText("必填 - 豆瓣图片链接")
         lf.addRow("海报URL *:", self.inp_poster)
 
-        self.inp_pan = QLineEdit()
-        self.inp_pan.setPlaceholderText("夸克网盘链接")
-        lf.addRow("夸克链接:", self.inp_pan)
-
-        self.inp_baidu = QLineEdit()
-        self.inp_baidu.setPlaceholderText("可选")
-        lf.addRow("百度链接:", self.inp_baidu)
+        self.inp_pan = QLineEdit()  # 隐藏，数据源填充
+        self.inp_pan.setVisible(False)
+        self.inp_baidu = QLineEdit()  # 隐藏，数据源填充
+        self.inp_baidu.setVisible(False)
 
         self.inp_tag = QLineEdit()
         self.inp_tag.setPlaceholderText("默认：电视剧")
@@ -1144,20 +1156,14 @@ class MainWindow(QMainWindow):
         lbl_var.setWordWrap(True)
         tpl_layout.addRow("", lbl_var)
 
-        # 评论模板
-        self.inp_comment_quark_tpl = QLineEdit(
-            self.config.get("comment_quark_template", "K👉{链接}")
+        # 评论模板（网盘链接）
+        self.inp_comment_tpl = QLineEdit(
+            self.config.get("comment_template", "【{剧名}】K👉{夸克链接}D👉{百度链接}")
         )
-        self.inp_comment_quark_tpl.setPlaceholderText("评论·夸克模板")
-        tpl_layout.addRow("夸克:", self.inp_comment_quark_tpl)
+        self.inp_comment_tpl.setPlaceholderText("评论·网盘链接模板")
+        tpl_layout.addRow("评论模板:", self.inp_comment_tpl)
 
-        self.inp_comment_baidu_tpl = QLineEdit(
-            self.config.get("comment_baidu_template", "D👉{链接}")
-        )
-        self.inp_comment_baidu_tpl.setPlaceholderText("评论·百度模板")
-        tpl_layout.addRow("百度:", self.inp_comment_baidu_tpl)
-
-        lbl_comment_var = QLabel("变量: {链接} {剧名} {原名} {年份} {又名} {类型} {季数} {集数} {AI影评} {标签}")
+        lbl_comment_var = QLabel("变量: {剧名} {夸克链接} {百度链接} {原名} {年份} {又名} {类型} {季数} {集数} {AI影评} {标签}")
         lbl_comment_var.setWordWrap(True)
         tpl_layout.addRow("", lbl_comment_var)
 
@@ -1340,6 +1346,9 @@ class MainWindow(QMainWindow):
         r_row.addWidget(self.inp_start_row)
         r_row.addStretch()
         settings.addRow("起始行:", r_row)
+        self.chk_skip_dup = QCheckBox("跳过已发布")
+        self.chk_skip_dup.setChecked(self.config.get("skip_duplicate", True))
+        settings.addRow("", self.chk_skip_dup)
         csv_form.addLayout(settings)
 
         btn_row = QHBoxLayout()
@@ -1579,8 +1588,7 @@ class MainWindow(QMainWindow):
                 "#{剧名}# {原名}\n又名：{又名}\n类型：{类型}\n"
                 "👇👇👇1-{季数}季见评👇👇👇\n{AI影评}#电视剧#"
             )
-            self.inp_comment_quark_tpl.setText("K👉{链接}")
-            self.inp_comment_baidu_tpl.setText("D👉{链接}")
+            self.inp_comment_tpl.setText("【{剧名}】K👉{夸克链接}D👉{百度链接}")
             logger.info('模板已恢复默认，请点击[保存所有设置]生效')
         except Exception as e:
             logger.error(f"恢复模板失败: {e}")
@@ -1671,8 +1679,7 @@ class MainWindow(QMainWindow):
         self.config["start_row"] = self.get_start_row()
         self.config["post_template"] = self.inp_post_tpl.toPlainText().strip()
         self.config["post_template_multi"] = self.inp_post_tpl_multi.toPlainText().strip()
-        self.config["comment_quark_template"] = self.inp_comment_quark_tpl.text().strip()
-        self.config["comment_baidu_template"] = self.inp_comment_baidu_tpl.text().strip()
+        self.config["comment_template"] = self.inp_comment_tpl.text().strip()
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
         logger.info("设置已保存")
@@ -1696,10 +1703,10 @@ class MainWindow(QMainWindow):
         self.config["feishu_secret"] = self.inp_feishu_secret.text()
         self.config["default_interval"] = self.spn_int.value()
         self.config["start_row"] = self.get_start_row()
+        self.config["skip_duplicate"] = self.chk_skip_dup.isChecked()
         self.config["post_template"] = self.inp_post_tpl.toPlainText().strip()
         self.config["post_template_multi"] = self.inp_post_tpl_multi.toPlainText().strip()
-        self.config["comment_quark_template"] = self.inp_comment_quark_tpl.text().strip()
-        self.config["comment_baidu_template"] = self.inp_comment_baidu_tpl.text().strip()
+        self.config["comment_template"] = self.inp_comment_tpl.text().strip()
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
         logger.info("所有设置已保存")
