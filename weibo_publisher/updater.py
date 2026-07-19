@@ -103,14 +103,21 @@ def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe
     dest = dest_dir / filename
     try:
         logger.info(f"开始下载更新: {url}")
-        resp = requests.get(url, stream=True, timeout=600)
+        resp = requests.get(
+            url,
+            stream=True,
+            timeout=(10, 60),
+            headers={"User-Agent": "YLFile-AutoUpdater"},
+        )
         resp.raise_for_status()
 
         total = int(resp.headers.get("content-length", 0))
         downloaded = 0
 
         with open(dest, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            for chunk in resp.iter_content(chunk_size=256 * 1024):
+                if not chunk:
+                    continue
                 f.write(chunk)
                 downloaded += len(chunk)
                 if total > 0 and progress_cb:
