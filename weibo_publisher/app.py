@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.16"
+__version__ = "4.17"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -960,8 +960,17 @@ class LiveTableWorker(threading.Thread):
             self.gui.set_status("实时监听已启动，等待数据...")
 
             while not self.gui.stop_flag:
-                # 读取数据源
-                pending = self._get_pending_tasks()
+                # 读取数据源（网络失败时自动重试）
+                try:
+                    pending = self._get_pending_tasks()
+                except Exception as e:
+                    logger.warning(f"读取数据源失败: {e}，60秒后重试...")
+                    self.gui.set_status("数据源读取失败，重试中...")
+                    for _ in range(60):
+                        if self.gui.stop_flag:
+                            return
+                        time.sleep(1)
+                    continue
 
                 if pending:
                     row_num, task = pending[0]
