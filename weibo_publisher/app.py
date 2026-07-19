@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.13"
+__version__ = "4.14"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path

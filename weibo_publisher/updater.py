@@ -56,8 +56,19 @@ def check_update(current_version: str):
         if token:
             headers["Authorization"] = f"token {token}"
 
-        resp = requests.get(GITHUB_API, headers=headers, timeout=15)
-        resp.raise_for_status()
+        # 先尝试系统代理，失败后绕过
+        resp = None
+        for proxies in [None, {"http": None, "https": None}]:
+            try:
+                resp = requests.get(GITHUB_API, headers=headers, timeout=15, proxies=proxies)
+                resp.raise_for_status()
+                break
+            except Exception:
+                resp = None
+                continue
+        if resp is None:
+            logger.warning("GitHub API 请求失败（代理和直连均失败）")
+            return None
         data = resp.json()
 
         tag = data.get("tag_name", "")
