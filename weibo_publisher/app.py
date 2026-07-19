@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.15"
+__version__ = "4.16"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -61,7 +61,7 @@ def load_memory():
                 return json.load(f)
     except Exception:
         pass
-    return {"last_fields": {}, "posted_dramas": []}
+    return {"last_fields": {}, "posted_dramas": [], "posted_history": {}}
 
 
 def save_memory(mem):
@@ -670,12 +670,24 @@ def do_publish(gui, fields, cfg=None, skip_dup=True):
         return False, False, False
 
     # 重复检测：检查该内容是否已发布过
-    if skip_dup:
-        mem = load_memory()
-        key = f"{drama}|{fields.get('original', '')}"
-        if key in mem.get("posted_dramas", []):
+    mem = load_memory()
+    key = f"{drama}|{fields.get('original', '')}"
+    if key in mem.get("posted_dramas", []):
+        if skip_dup:
             logger.warning(f"重复发布检测: {drama} 已发布过，跳过")
             return False, False, True
+        else:
+            # 显示上次发布信息
+            history = mem.get("posted_history", {}).get(key, {})
+            last_time = history.get("time", "未知时间")
+            last_season = history.get("season", "")
+            last_episodes = history.get("episodes", "")
+            detail = f"上次发布: {last_time}"
+            if last_season:
+                detail += f" | {last_season}"
+            if last_episodes:
+                detail += f" | {last_episodes}"
+            log_sig.msg.emit(f'<span style="color:#e74c3c;font-weight:bold;">⚠ 重复发布: {drama} — {detail}</span>')
 
     # 根据是否有季数选择单季/多季模板（提前到AI影评之前，用于判断是否需要AI影评）
     season_val = fields.get("season", "").strip()
@@ -763,10 +775,16 @@ def do_publish(gui, fields, cfg=None, skip_dup=True):
                 driver.comment(comment_text, uid)
             logger.info(f"已发布: {drama}")
             # 保存到 memory
+            from datetime import datetime
             mem = load_memory()
             key = f"{drama}|{fields.get('original', '')}"
             if key not in mem.get("posted_dramas", []):
                 mem.setdefault("posted_dramas", []).append(key)
+            mem.setdefault("posted_history", {})[key] = {
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "season": fields.get("season", ""),
+                "episodes": fields.get("episodes", ""),
+            }
             mem["last_fields"] = fields.copy()
             save_memory(mem)
             # 检查浏览器是否仍然连接
@@ -890,11 +908,10 @@ class AutoPublishWorker(threading.Thread):
                 if fatal:
                     break
 
-                # 重复发布：停止自动发布并提醒用户
+                # 重复发布：弹窗提醒但不停止
                 if is_dup:
-                    self.gui.auto_stop_flag = True
                     log_sig.dup_alert.emit(f['drama'])
-                    return
+                    continue  # 跳过等待，直接处理下一条
 
                 if not ok:
                     logger.error(f"发布{MAX_AUTO_RETRIES}次均失败，跳过: {f['drama']}")
@@ -976,23 +993,16 @@ class LiveTableWorker(threading.Thread):
             self.gui.btn_live.setEnabled(True)
 
     def _get_pending_tasks(self):
-        """读取数据源，返回未发布的待处理任务列表"""
+        """读取数据源，返回从起始行开始的待填入任务列表"""
         all_tasks = self.gui._read_current_source()
         if not all_tasks:
             return []
-        skip_dup = self.gui.chk_skip_dup.isChecked()
-        mem = load_memory()
-        published = set(mem.get("posted_dramas", []))
         start_row = self.gui.get_start_row()
         pending = []
         for idx, t in enumerate(all_tasks):
             row_num = idx + 2  # 第1行是表头
             if row_num < start_row:
                 continue
-            if skip_dup:
-                key = f"{t.get('drama', '')}|{t.get('original', '')}"
-                if key in published:
-                    continue
             pending.append((row_num, t))
         return pending
 
@@ -1394,16 +1404,17 @@ class MainWindow(QMainWindow):
 
     # ----- 信号处理 -----
     def _add_log(self, m):
-        self.log_area.append(m)
+        if m.startswith("<span"):
+            self.log_area.append(m)
+        else:
+            self.log_area.append(m)
         sb = self.log_area.verticalScrollBar()
         sb.setValue(sb.maximum())
 
     def _on_dup_alert(self, drama):
-        """重复发布提醒：停止自动发布并弹窗"""
-        self.auto_stop_flag = True
-        self.btn_auto.setText("自动发布")
-        self.set_status(f"已停止: {drama} 已发布过")
-        QMessageBox.warning(self, "重复发布", f"「{drama}」已发布过，自动发布已停止。\n请更换内容后重新启动。")
+        """重复发布提醒：弹窗提醒"""
+        self.set_status(f"已发布过: {drama}")
+        QMessageBox.warning(self, "重复发布", f"「{drama}」已发布过，已跳过。")
 
     def _on_pub_done(self):
         """发布成功信号 → 更新起始行 + 自动保存 + 通知监听器"""
