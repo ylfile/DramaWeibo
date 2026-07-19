@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.18"
+__version__ = "4.19"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -671,7 +671,7 @@ def do_publish(gui, fields, cfg=None, skip_dup=True):
 
     # 重复检测：检查该内容是否已发布过
     mem = load_memory()
-    key = f"{drama}|{fields.get('original', '')}"
+    key = f"{drama}|{fields.get('original', '')}|{fields.get('season', '')}|{fields.get('episodes', '')}"
     posted_list = mem.get("posted_dramas", [])
     if key in posted_list:
         if skip_dup:
@@ -787,7 +787,7 @@ def do_publish(gui, fields, cfg=None, skip_dup=True):
             # 保存到 memory
             from datetime import datetime
             mem = load_memory()
-            key = f"{drama}|{fields.get('original', '')}"
+            key = f"{drama}|{fields.get('original', '')}|{fields.get('season', '')}|{fields.get('episodes', '')}"
             if key not in mem.get("posted_dramas", []):
                 mem.setdefault("posted_dramas", []).append(key)
             mem.setdefault("posted_history", {})[key] = {
