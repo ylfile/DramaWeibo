@@ -9,7 +9,7 @@ import requests
 from pathlib import Path
 
 REPO = "ylfile/DramaWeibo"
-TAG = "v4.17"
+TAG = "v4.18"
 DIST_DIR = Path(__file__).parent / "dist"
 ASSETS = [
     ("YLFile-Setup.exe", DIST_DIR / "YLFile-Setup.exe"),
@@ -96,9 +96,10 @@ def main():
         r = requests.post(f"{api}/releases", headers=headers, json={
             "tag_name": TAG,
             "name": f"YLFile自动发布 {TAG}",
-            "body": "## YLFile自动发布 v4.17\n\n"
-                    "### 修复\n"
-                    "- 实时监听网络异常不再崩溃：飞书/Google API读取失败时自动等待重试\n\n"
+            "body": "## YLFile自动发布 v4.18\n\n"
+                    "### 改进\n"
+                    "- 重复检测增加调试日志，显示key匹配详情\n"
+                    "- 未勾选跳过已发布时显示更清晰的发布历史信息\n\n"
                     "### 安装包\n"
                     "- 下载 `YLFile-Setup.exe` 安装（推荐）",
             "draft": False,

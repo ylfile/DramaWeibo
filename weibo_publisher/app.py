@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.17"
+__version__ = "4.18"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -672,22 +672,32 @@ def do_publish(gui, fields, cfg=None, skip_dup=True):
     # 重复检测：检查该内容是否已发布过
     mem = load_memory()
     key = f"{drama}|{fields.get('original', '')}"
-    if key in mem.get("posted_dramas", []):
+    posted_list = mem.get("posted_dramas", [])
+    if key in posted_list:
         if skip_dup:
             logger.warning(f"重复发布检测: {drama} 已发布过，跳过")
             return False, False, True
         else:
             # 显示上次发布信息
             history = mem.get("posted_history", {}).get(key, {})
-            last_time = history.get("time", "未知时间")
+            last_time = history.get("time", "")
             last_season = history.get("season", "")
             last_episodes = history.get("episodes", "")
-            detail = f"上次发布: {last_time}"
+            parts = []
+            if last_time:
+                parts.append(f"时间: {last_time}")
             if last_season:
-                detail += f" | {last_season}"
+                parts.append(f"季数: {last_season}")
             if last_episodes:
-                detail += f" | {last_episodes}"
-            log_sig.msg.emit(f'<span style="color:#e74c3c;font-weight:bold;">⚠ 重复发布: {drama} — {detail}</span>')
+                parts.append(f"集数: {last_episodes}")
+            detail = " | ".join(parts) if parts else "无历史记录"
+            log_sig.msg.emit(
+                f'<span style="color:#e74c3c;font-weight:bold;">'
+                f'⚠ 重复发布: {drama} — {detail}'
+                f'</span>'
+            )
+    else:
+        logger.info(f"重复检测: {drama} (key={key}) 未发布过，共{len(posted_list)}条已发布记录")
 
     # 根据是否有季数选择单季/多季模板（提前到AI影评之前，用于判断是否需要AI影评）
     season_val = fields.get("season", "").strip()
