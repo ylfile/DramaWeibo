@@ -2,7 +2,7 @@
 ; 编译: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
 #define MyAppName "YLFile自动发布"
-#define MyAppVersion "4.14"
+#define MyAppVersion "4.15"
 #define MyAppPublisher "YLFile自动发布"
 #define MyAppExeName "YLFile.exe"
 

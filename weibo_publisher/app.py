@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.14"
+__version__ = "4.15"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -980,6 +980,7 @@ class LiveTableWorker(threading.Thread):
         all_tasks = self.gui._read_current_source()
         if not all_tasks:
             return []
+        skip_dup = self.gui.chk_skip_dup.isChecked()
         mem = load_memory()
         published = set(mem.get("posted_dramas", []))
         start_row = self.gui.get_start_row()
@@ -988,9 +989,11 @@ class LiveTableWorker(threading.Thread):
             row_num = idx + 2  # 第1行是表头
             if row_num < start_row:
                 continue
-            key = f"{t.get('drama', '')}|{t.get('original', '')}"
-            if key not in published:
-                pending.append((row_num, t))
+            if skip_dup:
+                key = f"{t.get('drama', '')}|{t.get('original', '')}"
+                if key in published:
+                    continue
+            pending.append((row_num, t))
         return pending
 
     def _fill_gui(self, row):
