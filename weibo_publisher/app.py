@@ -1742,8 +1742,6 @@ class MainWindow(QMainWindow):
             self.inp_feishu_appid.setText(self.config["feishu_appid"])
         if self.config.get("feishu_secret"):
             self.inp_feishu_secret.setText(self.config["feishu_secret"])
-        if self.config.get("start_row"):
-            self.set_start_row(self.config["start_row"])
         sel = self.config.get("selected_source", "local")
         if sel == "feishu":
             self.radio_feishu.setChecked(True)
