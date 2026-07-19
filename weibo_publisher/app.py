@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.12"
+__version__ = "4.13"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -1840,7 +1840,7 @@ class MainWindow(QMainWindow):
 
     def _get_feishu_token(self, app_id, app_secret):
         url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-        resp = req_lib.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
+        resp = req_lib.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=30)
         data = resp.json()
         if data.get("code") == 0:
             return data.get("tenant_access_token")
@@ -1851,7 +1851,7 @@ class MainWindow(QMainWindow):
         url = f"https://open.feishu.cn/open-apis/sheets/v3/spreadsheets/{token}/sheets/query"
         headers = {"Authorization": f"Bearer {access_token}"}
         try:
-            resp = req_lib.get(url, headers=headers, timeout=15)
+            resp = req_lib.get(url, headers=headers, timeout=30)
             data = resp.json()
             if data.get("code") != 0:
                 logger.error(f"查询工作表失败: {data}")
