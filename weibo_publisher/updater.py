@@ -97,41 +97,75 @@ def check_update(current_version: str):
 
 def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe", progress_cb=None) -> Path | None:
     """
-    下载更新文件到 dest_dir/filename。
+    下载更新文件到 dest_dir/filename，支持断点续传和自动重试。
     progress_cb(percent) 会被回调，percent 为 0-100。
     """
     dest = dest_dir / filename
-    try:
-        logger.info(f"开始下载更新: {url}")
-        resp = requests.get(
-            url,
-            stream=True,
-            timeout=(10, 60),
-            headers={"User-Agent": "YLFile-AutoUpdater"},
-        )
-        resp.raise_for_status()
+    max_retries = 5
 
-        total = int(resp.headers.get("content-length", 0))
-        downloaded = 0
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"开始下载更新 (第{attempt}次): {url}")
 
-        with open(dest, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=256 * 1024):
-                if not chunk:
-                    continue
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total > 0 and progress_cb:
-                    pct = downloaded * 100 // total
-                    progress_cb(pct)
+            # 断点续传：读取已下载大小
+            downloaded = dest.stat().st_size if dest.exists() else 0
+            headers = {"User-Agent": "YLFile-AutoUpdater"}
+            if downloaded > 0:
+                headers["Range"] = f"bytes={downloaded}-"
+                logger.info(f"断点续传: 已下载 {downloaded // 1024 // 1024}MB，继续下载")
 
-        logger.info(f"下载完成: {dest} ({downloaded // 1024 // 1024}MB)")
-        return dest
+            resp = requests.get(url, stream=True, timeout=(10, 30), headers=headers)
 
-    except Exception as e:
-        logger.error(f"下载更新失败: {e}")
-        if dest.exists():
-            dest.unlink()
-        return None
+            # 支持断点续传: 206 Partial Content; 不支持: 200 从头下载
+            if resp.status_code == 200:
+                downloaded = 0  # 服务器不支持续传，从头开始
+            elif resp.status_code == 206:
+                pass  # 续传成功
+            else:
+                resp.raise_for_status()
+
+            total = int(resp.headers.get("content-length", 0))
+            if resp.status_code == 200:
+                # 200 = 全量，total 就是文件大小
+                pass
+            elif resp.status_code == 206:
+                # 206 = 续传，total 是剩余大小，加上已下载的才是总大小
+                total = downloaded + total
+
+            with open(dest, "ab" if resp.status_code == 206 else "wb") as f:
+                last_pct = (downloaded * 100 // total) if total > 0 else 0
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0 and progress_cb:
+                        pct = downloaded * 100 // total
+                        if pct > last_pct:
+                            last_pct = pct
+                            progress_cb(pct)
+
+            logger.info(f"下载完成: {dest} ({downloaded // 1024 // 1024}MB)")
+            return dest
+
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError) as e:
+            logger.warning(f"下载中断 (第{attempt}次): {e}")
+            if attempt < max_retries:
+                wait = attempt * 3
+                logger.info(f"{wait}秒后重试...")
+                time.sleep(wait)
+            else:
+                logger.error(f"下载失败: 重试{max_retries}次均失败")
+                if dest.exists():
+                    dest.unlink()
+                return None
+
+        except Exception as e:
+            logger.error(f"下载更新失败: {e}")
+            if dest.exists():
+                dest.unlink()
+            return None
 
 
 def install_update(installer_path: Path, is_installer: bool = True):
