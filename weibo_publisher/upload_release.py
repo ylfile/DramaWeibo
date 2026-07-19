@@ -4,6 +4,7 @@
 """
 import sys
 import json
+import time
 import requests
 from pathlib import Path
 
@@ -32,17 +33,28 @@ def upload_asset(api, headers, release_id, asset_name, asset_path):
     size = asset_path.stat().st_size
     print(f"  上传 {asset_name} ({size // 1024 // 1024}MB)...")
     url = f"https://uploads.github.com/repos/{REPO}/releases/{release_id}/assets?name={asset_name}"
-    with open(asset_path, "rb") as f:
-        r = requests.post(
-            url,
-            headers={**headers, "Content-Type": "application/octet-stream"},
-            data=f,
-        )
-    if r.status_code not in (200, 201):
-        print(f"  上传失败: {r.text}")
-        return False
-    print(f"  上传成功!")
-    return True
+    # 绕过系统代理上传（代理对大文件上传不稳定）
+    proxy_bypass = {"http": None, "https": None}
+    for attempt in range(1, 4):
+        try:
+            with open(asset_path, "rb") as f:
+                r = requests.post(
+                    url,
+                    headers={**headers, "Content-Type": "application/octet-stream"},
+                    data=f,
+                    timeout=(10, 600),
+                    proxies=proxy_bypass,
+                )
+            if r.status_code in (200, 201):
+                print(f"  上传成功!")
+                return True
+            print(f"  上传失败 (第{attempt}次): {r.status_code}")
+        except Exception as e:
+            print(f"  上传异常 (第{attempt}次): {e}")
+        if attempt < 3:
+            print(f"  3秒后重试...")
+            time.sleep(3)
+    return False
 
 
 def main():

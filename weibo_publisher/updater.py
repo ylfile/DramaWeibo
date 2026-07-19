@@ -95,41 +95,68 @@ def check_update(current_version: str):
         return None
 
 
+def _get_download_urls(github_url: str):
+    """返回下载URL列表：国内镜像优先，GitHub直连兜底"""
+    return [
+        f"https://mirror.ghproxy.com/{github_url}",
+        f"https://ghfast.top/{github_url}",
+        github_url,
+    ]
+
+
 def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe", progress_cb=None) -> Path | None:
     """
-    下载更新文件到 dest_dir/filename，支持断点续传和自动重试。
+    下载更新文件到 dest_dir/filename，国内镜像加速 + 断点续传。
+    先尝试系统代理，失败后绕过代理直连。
     progress_cb(percent) 会被回调，percent 为 0-100。
     """
     dest = dest_dir / filename
-    max_retries = 5
+    urls = _get_download_urls(url)
 
+    # 第一轮：用系统代理（默认行为）
+    for mirror_url in urls:
+        logger.info(f"尝试下载（代理）: {mirror_url[:80]}...")
+        result = _try_download(mirror_url, dest, progress_cb, use_proxy=True)
+        if result:
+            return result
+        logger.warning(f"代理下载失败，尝试直连...")
+
+    # 第二轮：绕过代理直连
+    for mirror_url in urls:
+        logger.info(f"尝试下载（直连）: {mirror_url[:80]}...")
+        result = _try_download(mirror_url, dest, progress_cb, use_proxy=False)
+        if result:
+            return result
+
+    logger.error("所有下载源均失败")
+    if dest.exists():
+        dest.unlink()
+    return None
+
+
+def _try_download(url, dest, progress_cb, use_proxy=True, max_retries=3):
+    """单个URL的下载逻辑，支持断点续传和重试"""
+    proxy_setting = None if use_proxy else {"http": None, "https": None}
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"开始下载更新 (第{attempt}次): {url}")
-
-            # 断点续传：读取已下载大小
             downloaded = dest.stat().st_size if dest.exists() else 0
             headers = {"User-Agent": "YLFile-AutoUpdater"}
             if downloaded > 0:
                 headers["Range"] = f"bytes={downloaded}-"
-                logger.info(f"断点续传: 已下载 {downloaded // 1024 // 1024}MB，继续下载")
+                logger.info(f"断点续传: 已下载 {downloaded // 1024 // 1024}MB")
 
-            resp = requests.get(url, stream=True, timeout=(10, 30), headers=headers)
+            resp = requests.get(url, stream=True, timeout=(10, 30),
+                                headers=headers, proxies=proxy_setting)
 
-            # 支持断点续传: 206 Partial Content; 不支持: 200 从头下载
             if resp.status_code == 200:
-                downloaded = 0  # 服务器不支持续传，从头开始
+                downloaded = 0  # 不支持续传，从头开始
             elif resp.status_code == 206:
                 pass  # 续传成功
             else:
                 resp.raise_for_status()
 
             total = int(resp.headers.get("content-length", 0))
-            if resp.status_code == 200:
-                # 200 = 全量，total 就是文件大小
-                pass
-            elif resp.status_code == 206:
-                # 206 = 续传，total 是剩余大小，加上已下载的才是总大小
+            if resp.status_code == 206:
                 total = downloaded + total
 
             with open(dest, "ab" if resp.status_code == 206 else "wb") as f:
@@ -152,20 +179,13 @@ def download_update(url: str, dest_dir: Path, filename: str = "YLFile_update.exe
                 requests.exceptions.ChunkedEncodingError) as e:
             logger.warning(f"下载中断 (第{attempt}次): {e}")
             if attempt < max_retries:
-                wait = attempt * 3
-                logger.info(f"{wait}秒后重试...")
-                time.sleep(wait)
-            else:
-                logger.error(f"下载失败: 重试{max_retries}次均失败")
-                if dest.exists():
-                    dest.unlink()
-                return None
+                time.sleep(attempt * 2)
 
         except Exception as e:
-            logger.error(f"下载更新失败: {e}")
-            if dest.exists():
-                dest.unlink()
-            return None
+            logger.error(f"下载失败: {e}")
+            break
+
+    return None
 
 
 def install_update(installer_path: Path, is_installer: bool = True):
