@@ -2,7 +2,7 @@
 YLFile自动发布 v4.10
 Selenium + Chrome + PyQt5 + Live Table
 """
-__version__ = "4.19"
+__version__ = "4.20"
 
 import sys, os, csv, json, time, logging, threading
 from pathlib import Path
@@ -676,7 +676,6 @@ def do_publish(gui, fields, cfg=None, skip_dup=True):
     if key in posted_list:
         if skip_dup:
             logger.warning(f"重复发布检测: {drama} 已发布过，跳过")
-            return False, False, True
         else:
             # 显示上次发布信息
             history = mem.get("posted_history", {}).get(key, {})
@@ -696,6 +695,7 @@ def do_publish(gui, fields, cfg=None, skip_dup=True):
                 f'⚠ 重复发布: {drama} — {detail}'
                 f'</span>'
             )
+        return False, False, True
     else:
         logger.info(f"重复检测: {drama} (key={key}) 未发布过，共{len(posted_list)}条已发布记录")
 
@@ -921,6 +921,7 @@ class AutoPublishWorker(threading.Thread):
                 # 重复发布：弹窗提醒但不停止
                 if is_dup:
                     log_sig.dup_alert.emit(f['drama'])
+                    log_sig.pub_done.emit()  # 通知监听器前进到下一行
                     continue  # 跳过等待，直接处理下一条
 
                 if not ok:
@@ -1431,9 +1432,8 @@ class MainWindow(QMainWindow):
         sb.setValue(sb.maximum())
 
     def _on_dup_alert(self, drama):
-        """重复发布提醒：弹窗提醒"""
-        self.set_status(f"已发布过: {drama}")
-        QMessageBox.warning(self, "重复发布", f"「{drama}」已发布过，已跳过。")
+        """重复发布提醒：状态栏提示"""
+        self.set_status(f"已跳过: {drama}（已发布过）")
 
     def _on_pub_done(self):
         """发布成功信号 → 更新起始行 + 自动保存 + 通知监听器"""
